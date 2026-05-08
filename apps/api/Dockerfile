@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.4
 
 FROM base AS builder
-RUN npm install -g @nestjs/cli typescript@5.7.3 prisma@6
+RUN npm install -g @nestjs/cli@10 typescript@5.9.3 prisma@6
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
