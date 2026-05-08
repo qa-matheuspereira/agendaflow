@@ -2,7 +2,6 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.4
 
 FROM base AS builder
-RUN npm install -g prisma@6
 WORKDIR /app
 COPY .npmrc ./
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -12,7 +11,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN PRISMA_GENERATE_SKIP_AUTOINSTALL=1 prisma generate --schema=apps/api/prisma/schema.prisma
+RUN PRISMA_GENERATE_SKIP_AUTOINSTALL=1 node_modules/.bin/prisma generate --schema=apps/api/prisma/schema.prisma
 RUN pnpm --filter @agendaflow/shared build || true
 RUN pnpm --filter @agendaflow/api build
 
