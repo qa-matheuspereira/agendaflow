@@ -104,6 +104,7 @@ async function main() {
     create: {
       companyId: platformCompany.id,
       instanceName: superInstanceName,
+      instanceKey: `key-${superInstanceName}`,
       isConnected: false,
       greetingMessage: 'Olá! Bem-vindo ao AgendaFlow. Como posso ajudar?',
       scheduleConfirmMsg: 'Seu agendamento foi confirmado para {{data}} às {{hora}}.',
@@ -119,6 +120,7 @@ async function main() {
     create: {
       companyId: demoCompany.id,
       instanceName: demoInstanceName,
+      instanceKey: `key-${demoInstanceName}`,
       isConnected: false,
       greetingMessage: 'Olá! Bem-vindo à Barbearia Demo. Como posso ajudar?',
       scheduleConfirmMsg: 'Seu agendamento foi confirmado para {{data}} às {{hora}}.',
