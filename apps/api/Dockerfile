@@ -2,6 +2,7 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.4
 
 FROM base AS builder
+RUN npm install -g @nestjs/cli typescript
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
