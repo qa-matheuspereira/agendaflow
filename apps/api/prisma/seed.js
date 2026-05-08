@@ -94,6 +94,40 @@ async function main() {
     },
   });
 
+  // WhatsApp config — necessário para os endpoints /settings/whatsapp/*
+  const superInstanceName = `agendaflow-${platformCompany.id.substring(0, 8)}`;
+  const demoInstanceName = `barbearia-${demoCompany.id.substring(0, 8)}`;
+
+  await prisma.whatsappConfig.upsert({
+    where: { companyId: platformCompany.id },
+    update: {},
+    create: {
+      companyId: platformCompany.id,
+      instanceName: superInstanceName,
+      isConnected: false,
+      greetingMessage: 'Olá! Bem-vindo ao AgendaFlow. Como posso ajudar?',
+      scheduleConfirmMsg: 'Seu agendamento foi confirmado para {{data}} às {{hora}}.',
+      reminderMessage: 'Lembrete: você tem um agendamento amanhã às {{hora}}.',
+      cancellationMessage: 'Seu agendamento foi cancelado. Entre em contato para reagendar.',
+      queueCalledMessage: 'É a sua vez! Por favor, dirija-se ao atendimento.',
+    },
+  });
+
+  await prisma.whatsappConfig.upsert({
+    where: { companyId: demoCompany.id },
+    update: {},
+    create: {
+      companyId: demoCompany.id,
+      instanceName: demoInstanceName,
+      isConnected: false,
+      greetingMessage: 'Olá! Bem-vindo à Barbearia Demo. Como posso ajudar?',
+      scheduleConfirmMsg: 'Seu agendamento foi confirmado para {{data}} às {{hora}}.',
+      reminderMessage: 'Lembrete: você tem um agendamento amanhã às {{hora}}.',
+      cancellationMessage: 'Seu agendamento foi cancelado. Entre em contato para reagendar.',
+      queueCalledMessage: 'É a sua vez! Por favor, dirija-se ao atendimento.',
+    },
+  });
+
   console.log('✅ Seed concluído!');
   console.log(`📧 Login: ${superEmail} / ${superPassword}`);
   console.log('📧 Demo:  admin@barbeariademo.com.br / Admin@123');

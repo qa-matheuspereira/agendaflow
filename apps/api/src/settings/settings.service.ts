@@ -166,8 +166,22 @@ export class SettingsService {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
     if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
 
+    // Verificar se Evolution API está configurada
+    if (!this.evolutionUrl || this.evolutionUrl.includes('localhost:8080')) {
+      const isReachable = await axios.get(`${this.evolutionUrl}/`, { timeout: 3000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!isReachable) {
+        return {
+          qrcode: null,
+          error: 'Evolution API não está disponível. Configure EVOLUTION_API_URL com a URL correta e certifique-se que o serviço está rodando.',
+        };
+      }
+    }
+
     try {
-      // Try to fetch QR from existing instance
+      // Tenta buscar QR de instância existente
       const res = await axios.get(
         `${this.evolutionUrl}/instance/qrcode/base64/${config.instanceName}`,
         { headers: this.evoHeaders(), timeout: 10000 },
@@ -175,7 +189,7 @@ export class SettingsService {
       const base64 = res.data?.qrcode?.base64 ?? res.data?.base64 ?? null;
       return { qrcode: base64 };
     } catch (err: unknown) {
-      // Instance might not exist yet — create it
+      // Instância não existe — criar
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         try {
           const createRes = await axios.post(
@@ -190,9 +204,18 @@ export class SettingsService {
           const base64 = createRes.data?.qrcode?.base64 ?? null;
           return { qrcode: base64 };
         } catch {
-          return { qrcode: null, error: 'Falha ao criar instância' };
+          return { qrcode: null, error: 'Falha ao criar instância na Evolution API' };
         }
       }
+
+      // Connection refused / timeout
+      if (axios.isAxiosError(err) && !err.response) {
+        return {
+          qrcode: null,
+          error: 'Não foi possível conectar à Evolution API. Verifique se o serviço está rodando.',
+        };
+      }
+
       return { qrcode: null, error: 'Falha ao gerar QR Code' };
     }
   }
