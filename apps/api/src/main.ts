@@ -20,9 +20,30 @@ async function bootstrap() {
   // Security
   app.use(helmet());
 
-  // CORS
+  // CORS — aceita FRONTEND_URL + domínios chronostime.space + sslip.io (Coolify) + localhost
+  const frontendUrl = config.get<string>('frontendUrl', 'http://localhost:3000');
+  const allowedOrigins = [
+    frontendUrl,
+    'https://app.chronostime.space',
+    'https://chronostime.space',
+    'https://staging.chronostime.space',
+    'http://localhost:3000',
+  ];
+
   app.enableCors({
-    origin: config.get<string>('frontendUrl', 'http://localhost:3000'),
+    origin: (origin, callback) => {
+      // Permite requests sem origin (curl, Swagger, server-to-server)
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.chronostime.space') ||
+        origin.endsWith('.sslip.io') ||
+        origin.endsWith('.coolify.io')
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS bloqueado: ${origin}`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type', 'apikey'],
