@@ -4,7 +4,7 @@ import { AuditService } from '@/audit/audit.service';
 import { AuditAction, UserRole } from '@agendaflow/shared';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { PlanType, CompanyStatus } from '@prisma/client';
 
 @Injectable()

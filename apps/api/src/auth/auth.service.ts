@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '@/core/database/prisma.service';
 import type { AuthenticatedUser, JwtPayload, LoginResponse } from '@agendaflow/shared';
 import { UserRole } from '@agendaflow/shared';
