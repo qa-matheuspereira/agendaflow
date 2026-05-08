@@ -1,0 +1,15 @@
+import { Module } from '@nestjs/common';
+import { WhatsappController } from './whatsapp.controller';
+import { WhatsappService } from './whatsapp.service';
+import { WhatsappInboundService } from './whatsapp-inbound.service';
+import { WhatsappClientBotService } from './whatsapp-client-bot.service';
+import { WhatsappCollaboratorBotService } from './whatsapp-collaborator-bot.service';
+import { ScheduleEngineModule } from '@/schedule-engine/schedule-engine.module';
+
+@Module({
+  imports: [ScheduleEngineModule],
+  controllers: [WhatsappController],
+  providers: [WhatsappService, WhatsappInboundService, WhatsappClientBotService, WhatsappCollaboratorBotService],
+  exports: [WhatsappService],
+})
+export class WhatsappModule {}

@@ -1,0 +1,25 @@
+{
+  "name": "@agendaflow/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Types, enums e interfaces compartilhados entre backend e frontend",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "dev": "tsc --project tsconfig.json --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@agendaflow/config": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}

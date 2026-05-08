@@ -1,0 +1,676 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum PlanType {
+  BASIC
+  PRO
+  ENTERPRISE
+  TRIAL
+}
+
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  TRIAL
+}
+
+enum SchedulingMode {
+  SCHEDULE_ONLY
+  QUEUE_ONLY
+  HYBRID
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  RECEPTIONIST
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum QueueStatus {
+  WAITING
+  CALLED
+  IN_SERVICE
+  DONE
+  LEFT
+}
+
+enum QueuePriority {
+  NORMAL
+  VIP
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+enum PaymentMethod {
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+  CASH
+  COURTESY
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum NotificationType {
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_REMINDER
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_NO_SHOW
+  QUEUE_CALLED
+  QUEUE_POSITION
+  PAYMENT_LINK
+  RETURN_REMINDER
+  CUSTOM
+}
+
+// ============================================================
+// COMPANY (Tenant)
+// ============================================================
+
+model Company {
+  id             String         @id @default(uuid())
+  name           String
+  slug           String         @unique
+  email          String         @unique
+  phone          String?
+  document       String?
+  logoUrl        String?
+  planType       PlanType       @default(TRIAL)
+  status         CompanyStatus  @default(TRIAL)
+  schedulingMode SchedulingMode @default(HYBRID)
+  timezone       String         @default("America/Sao_Paulo")
+  trialEndsAt    DateTime?
+  subscriptionId String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  users               User[]
+  collaborators       Collaborator[]
+  clients             Client[]
+  services            Service[]
+  serviceCategories   ServiceCategory[]
+  appointments        Appointment[]
+  queueEntries        QueueEntry[]
+  businessHours       BusinessHour[]
+  specialDays         SpecialDay[]
+  breaks              Break[]
+  whatsappConfig      WhatsappConfig?
+  mercadopagoConfig   MercadopagoConfig?
+  businessRules       BusinessRules?
+  notifications       Notification[]
+  conversationStates  ConversationState[]
+  auditLogs           AuditLog[]
+  payments            Payment[]
+
+  @@index([slug])
+  @@index([status])
+  @@map("companies")
+}
+
+// ============================================================
+// USER (Painel Web)
+// ============================================================
+
+model User {
+  id           String   @id @default(uuid())
+  companyId    String
+  name         String
+  email        String
+  passwordHash String
+  role         UserRole @default(RECEPTIONIST)
+  phone        String?
+  avatarUrl    String?
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  refreshToken String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  auditLogs AuditLog[]
+
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@index([email])
+  @@map("users")
+}
+
+// ============================================================
+// COLLABORATOR
+// ============================================================
+
+model Collaborator {
+  id                String   @id @default(uuid())
+  companyId         String
+  name              String
+  whatsappNumber    String
+  whatsappLid       String?
+  email             String?
+  avatarUrl         String?
+  bio               String?
+  isActive          Boolean  @default(true)
+  canViewSchedule   Boolean  @default(true)
+  canCreateSchedule Boolean  @default(true)
+  canEditSchedule   Boolean  @default(true)
+  canDeleteSchedule Boolean  @default(false)
+  canCreateBreak    Boolean  @default(true)
+  canCallNextQueue  Boolean  @default(true)
+  canFinishService  Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company           Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  services          CollaboratorService[]
+  appointments      Appointment[]
+  breaks            Break[]
+  queueEntries      QueueEntry[]
+  businessHours     BusinessHour[]
+  specialDays       SpecialDay[]
+
+  @@unique([companyId, whatsappNumber])
+  @@index([companyId])
+  @@index([whatsappNumber])
+  @@index([whatsappLid])
+  @@map("collaborators")
+}
+
+// ============================================================
+// CLIENT
+// ============================================================
+
+model Client {
+  id             String    @id @default(uuid())
+  companyId      String
+  name           String
+  whatsappNumber String
+  email          String?
+  birthdate      DateTime?
+  notes          String?
+  avatarUrl      String?
+  isBlocked      Boolean   @default(false)
+  blockedReason  String?
+  blockedAt      DateTime?
+  absenceCount   Int       @default(0)
+  trustScore     Int       @default(100)
+  lastVisitAt    DateTime?
+  totalVisits    Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+  queueEntries QueueEntry[]
+  clientPlan   ClientPlan?
+  absences     ClientAbsence[]
+
+  @@unique([companyId, whatsappNumber])
+  @@index([companyId])
+  @@index([whatsappNumber])
+  @@index([companyId, isBlocked])
+  @@map("clients")
+}
+
+model ClientPlan {
+  id            String   @id @default(uuid())
+  clientId      String   @unique
+  companyId     String
+  serviceId     String?
+  monthlyQuota  Int
+  usedThisMonth Int      @default(0)
+  cycleStartDay Int      @default(1)
+  price         Decimal  @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  renewsAt      DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id])
+
+  @@index([companyId])
+  @@map("client_plans")
+}
+
+model ClientAbsence {
+  id            String   @id @default(uuid())
+  clientId      String
+  companyId     String
+  appointmentId String?
+  occurredAt    DateTime @default(now())
+  notes         String?
+
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@index([clientId])
+  @@index([companyId])
+  @@map("client_absences")
+}
+
+// ============================================================
+// SERVICE
+// ============================================================
+
+model ServiceCategory {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  color     String?
+  icon      String?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  services Service[]
+
+  @@index([companyId])
+  @@map("service_categories")
+}
+
+model Service {
+  id                     String   @id @default(uuid())
+  companyId              String
+  categoryId             String?
+  name                   String
+  description            String?
+  durationMinutes        Int
+  breakAfterMinutes      Int      @default(0)
+  price                  Decimal  @db.Decimal(10, 2)
+  requiresDocument       Boolean  @default(false)
+  documentInstruction    String?
+  requiresAdvancePayment Boolean  @default(false)
+  advancePaymentType     String?
+  advancePaymentValue    Decimal? @db.Decimal(10, 2)
+  isActive               Boolean  @default(true)
+  maxDailyAppointments   Int?
+  order                  Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category      ServiceCategory?    @relation(fields: [categoryId], references: [id])
+  collaborators CollaboratorService[]
+  appointments  Appointment[]
+  clientPlans   ClientPlan[]
+  queueEntries  QueueEntry[]
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+  @@map("services")
+}
+
+model CollaboratorService {
+  collaboratorId String
+  serviceId      String
+  assignedAt     DateTime @default(now())
+
+  collaborator Collaborator @relation(fields: [collaboratorId], references: [id], onDelete: Cascade)
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([collaboratorId, serviceId])
+  @@map("collaborator_services")
+}
+
+// ============================================================
+// BUSINESS HOURS
+// ============================================================
+
+model BusinessHour {
+  id              String    @id @default(uuid())
+  companyId       String
+  collaboratorId  String?
+  dayOfWeek       DayOfWeek
+  openTime        String
+  closeTime       String
+  isOpen          Boolean   @default(true)
+  slotDurationMin Int       @default(30)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  collaborator Collaborator? @relation(fields: [collaboratorId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, collaboratorId])
+  @@map("business_hours")
+}
+
+model SpecialDay {
+  id             String   @id @default(uuid())
+  companyId      String
+  collaboratorId String?
+  date           DateTime @db.Date
+  isHoliday      Boolean  @default(false)
+  isClosed       Boolean  @default(false)
+  openTime       String?
+  closeTime      String?
+  description    String?
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  collaborator Collaborator? @relation(fields: [collaboratorId], references: [id])
+
+  @@index([companyId, date])
+  @@map("special_days")
+}
+
+model Break {
+  id             String   @id @default(uuid())
+  companyId      String
+  collaboratorId String
+  date           DateTime @db.Date
+  startTime      String
+  endTime        String
+  reason         String?
+  createdByBot   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  collaborator Collaborator @relation(fields: [collaboratorId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, collaboratorId, date])
+  @@map("breaks")
+}
+
+// ============================================================
+// APPOINTMENT
+// ============================================================
+
+model Appointment {
+  id              String            @id @default(uuid())
+  companyId       String
+  clientId        String
+  collaboratorId  String
+  serviceId       String
+  status          AppointmentStatus @default(SCHEDULED)
+  scheduledDate   DateTime          @db.Date
+  scheduledTime   String
+  endTime         String
+  notes           String?
+  internalNotes   String?
+  confirmedAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelledBy     String?
+  cancelReason    String?
+  noShowAt        DateTime?
+  documentUrl     String?
+  documentApproved Boolean?
+  reminderSent         Boolean           @default(false)
+  dayReminderSent      Boolean           @default(false)
+  sentReminderMinutes  Int[]
+  createdViaBot        Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  client       Client          @relation(fields: [clientId], references: [id])
+  collaborator Collaborator    @relation(fields: [collaboratorId], references: [id])
+  service      Service         @relation(fields: [serviceId], references: [id])
+  payment      Payment?
+  absences     ClientAbsence[]
+
+  @@index([companyId])
+  @@index([companyId, scheduledDate])
+  @@index([companyId, collaboratorId, scheduledDate])
+  @@index([companyId, clientId])
+  @@index([companyId, status])
+  @@map("appointments")
+}
+
+// ============================================================
+// QUEUE
+// ============================================================
+
+model QueueEntry {
+  id             String        @id @default(uuid())
+  companyId      String
+  clientId       String
+  collaboratorId String?
+  serviceId      String?
+  status         QueueStatus   @default(WAITING)
+  priority       QueuePriority @default(NORMAL)
+  position       Int
+  estimatedWait  Int?
+  notes          String?
+  joinedAt       DateTime      @default(now())
+  calledAt       DateTime?
+  serviceStartAt DateTime?
+  completedAt    DateTime?
+  leftAt         DateTime?
+  createdViaBot  Boolean       @default(false)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  client       Client        @relation(fields: [clientId], references: [id])
+  collaborator Collaborator? @relation(fields: [collaboratorId], references: [id])
+  service      Service?      @relation(fields: [serviceId], references: [id])
+
+  @@index([companyId, status])
+  @@index([companyId, status, priority, joinedAt])
+  @@index([clientId, status])
+  @@map("queue_entries")
+}
+
+// ============================================================
+// PAYMENT
+// ============================================================
+
+model Payment {
+  id               String        @id @default(uuid())
+  companyId        String
+  appointmentId    String?       @unique
+  clientId         String
+  amount           Decimal       @db.Decimal(10, 2)
+  status           PaymentStatus @default(PENDING)
+  method           PaymentMethod?
+  mpPaymentId      String?       @unique
+  mpPreferenceId   String?
+  mpPaymentLink    String?
+  mpQrCode         String?
+  mpQrCodeBase64   String?
+  paidAt           DateTime?
+  refundedAt       DateTime?
+  expiresAt        DateTime?
+  description      String?
+  isAdvancePayment Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([mpPaymentId])
+  @@map("payments")
+}
+
+// ============================================================
+// WHATSAPP CONFIG
+// ============================================================
+
+model WhatsappConfig {
+  id                  String  @id @default(uuid())
+  companyId           String  @unique
+  instanceName        String  @unique
+  instanceKey         String
+  webhookUrl          String?
+  isConnected         Boolean @default(false)
+  phoneNumber         String?
+  greetingMessage     String? @db.Text
+  scheduleConfirmMsg  String? @db.Text
+  reminderMessage     String? @db.Text
+  cancellationMessage String? @db.Text
+  queueCalledMessage  String? @db.Text
+  reminderHoursBefore Int     @default(2)
+  reminderDayBefore   Boolean @default(true)
+  reminderRules          Json    @default("[]")
+  dailyReminderEnabled   Boolean @default(false)
+  dailyReminderTime      String  @default("07:00")
+  autoConfirmEnabled     Boolean @default(false)
+  autoConfirmHours    Int     @default(2)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_configs")
+}
+
+// ============================================================
+// MERCADO PAGO CONFIG
+// ============================================================
+
+model MercadopagoConfig {
+  id             String   @id @default(uuid())
+  companyId      String   @unique
+  accessToken    String
+  publicKey      String
+  userId         String?
+  storeId        String?
+  webhookSecret  String?
+  isActive       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("mercadopago_configs")
+}
+
+// ============================================================
+// BUSINESS RULES
+// ============================================================
+
+model BusinessRules {
+  id                        String   @id @default(uuid())
+  companyId                 String   @unique
+  cancellationAllowed       Boolean  @default(true)
+  cancellationMinHours      Int      @default(2)
+  cancellationPenaltyType   String?
+  cancellationPenaltyValue  Decimal? @db.Decimal(10, 2)
+  autoBlockEnabled          Boolean  @default(false)
+  autoBlockAfterAbsences    Int      @default(3)
+  autoBlockWindowDays       Int      @default(30)
+  autoBlockDurationDays     Int?
+  autoReturnEnabled         Boolean  @default(false)
+  autoReturnAfterDays       Int      @default(30)
+  autoReturnMessage         String?  @db.Text
+  requireConfirmation       Boolean  @default(true)
+  confirmationDeadlineHours Int      @default(24)
+  newClientFlow             String   @default("NORMAL")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("business_rules")
+}
+
+// ============================================================
+// NOTIFICATION
+// ============================================================
+
+model Notification {
+  id             String           @id @default(uuid())
+  companyId      String
+  clientId       String?
+  collaboratorId String?
+  type           NotificationType
+  whatsappNumber String
+  message        String           @db.Text
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  failedAt       DateTime?
+  failReason     String?
+  evolutionMsgId String?
+  createdAt      DateTime         @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([companyId, type])
+  @@index([whatsappNumber])
+  @@map("notifications")
+}
+
+// ============================================================
+// CONVERSATION STATE (WhatsApp Bot)
+// ============================================================
+
+model ConversationState {
+  id             String   @id @default(uuid())
+  companyId      String
+  whatsappNumber String
+  currentStep    String
+  context        Json     @default("{}")
+  expiresAt      DateTime
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, whatsappNumber])
+  @@index([companyId])
+  @@index([expiresAt])
+  @@map("conversation_states")
+}
+
+// ============================================================
+// AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  companyId String
+  userId    String?
+  action    String
+  entity    String
+  entityId  String
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, entity, entityId])
+  @@index([companyId, createdAt])
+  @@map("audit_logs")
+}

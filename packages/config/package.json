@@ -1,0 +1,20 @@
+{
+  "name": "@agendaflow/config",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Configurações compartilhadas: tsconfig, eslint, prettier",
+  "exports": {
+    "./tsconfig": "./tsconfig.base.json",
+    "./eslint": "./.eslintrc.base.js",
+    "./prettier": "./prettier.config.js"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.30",
+    "eslint-plugin-import": "^2.31.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3"
+  }
+}

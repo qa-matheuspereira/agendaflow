@@ -1,0 +1,48 @@
+{
+  "secretKey": "THISISMYSECURETOKEN",
+  "host": "0.0.0.0",
+  "port": "21465",
+  "startAllSession": false,
+  "tokenStoreType": "file",
+  "webhook": {
+    "url": "http://host.docker.internal:3001/api/v1/whatsapp/webhook?secret=agendaflow_webhook_verify_2026",
+    "autoDownload": false,
+    "readMessage": false,
+    "listenAcks": true,
+    "listenOwnMessages": false,
+    "onQrCode": true
+  },
+  "createOptions": {
+    "headless": true,
+    "autoClose": 300000,
+    "deviceName": "AgendaFlowBot",
+    "puppeteerOptions": {
+      "args": [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-breakpad",
+        "--disable-client-side-phishing-detection",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--disable-extensions",
+        "--disable-hang-monitor",
+        "--disable-ipc-flooding-protection",
+        "--disable-popup-blocking",
+        "--disable-prompt-on-repost",
+        "--disable-renderer-backgrounding",
+        "--disable-sync",
+        "--metrics-recording-only",
+        "--no-first-run",
+        "--password-store=basic",
+        "--use-mock-keychain"
+      ]
+    }
+  }
+}

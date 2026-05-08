@@ -1,0 +1,45 @@
+{
+  "name": "agendaflow-saas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AgendaFlow - SaaS multitenant de agendamento e fila inteligente",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:api": "turbo run dev --filter=@agendaflow/api",
+    "dev:web": "turbo run dev --filter=@agendaflow/web",
+    "build": "turbo run build",
+    "build:api": "turbo run build --filter=@agendaflow/api",
+    "build:web": "turbo run build --filter=@agendaflow/web",
+    "test": "turbo run test",
+    "test:api": "turbo run test --filter=@agendaflow/api",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "turbo run db:generate --filter=@agendaflow/api",
+    "db:migrate": "turbo run db:migrate --filter=@agendaflow/api",
+    "db:migrate:dev": "turbo run db:migrate:dev --filter=@agendaflow/api",
+    "db:studio": "turbo run db:studio --filter=@agendaflow/api",
+    "db:seed": "turbo run db:seed --filter=@agendaflow/api",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "prettier": "^3.8.3",
+    "turbo": "^2.3.3"
+  },
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "^18.3.18",
+      "@types/react-dom": "^18.3.5"
+    }
+  }
+}
