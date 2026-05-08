@@ -9,7 +9,7 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
-RUN echo "node-linker=hoisted" > .npmrc && pnpm install --frozen-lockfile
+RUN echo "node-linker=hoisted" > .npmrc && NODE_ENV=development pnpm install --frozen-lockfile
 COPY . .
 RUN PRISMA_GENERATE_SKIP_AUTOINSTALL=1 node_modules/.bin/prisma generate --schema=apps/api/prisma/schema.prisma
 RUN pnpm --filter @agendaflow/shared build || true
