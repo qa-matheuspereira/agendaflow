@@ -12,10 +12,13 @@ const nextConfig = {
   },
 
   async rewrites() {
+    // INTERNAL_API_URL = URL da API acessível pelo servidor Next.js (server-to-server)
+    // Não precisa ser NEXT_PUBLIC_ — é lida em runtime, não build time
+    const apiUrl = process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
     return [
       {
-        source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1/:path*`,
+        source: '/backend/:path*',
+        destination: `${apiUrl}/api/v1/:path*`,
       },
     ];
   },

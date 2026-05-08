@@ -1,10 +1,20 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// URL relativa → browser chama /backend/* → Next.js proxia server-side para a API
+// Sem CORS, sem build arg, funciona em qualquer ambiente
+const getBaseURL = () => {
+  // Server-side (SSR): usa URL interna direta
+  if (typeof window === 'undefined') {
+    const apiUrl = process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+    return `${apiUrl}/api/v1`;
+  }
+  // Client-side: usa o proxy do Next.js (sem CORS)
+  return '/backend';
+};
 
 export const api: AxiosInstance = axios.create({
-  baseURL: `${API_URL}/api/v1`,
+  baseURL: getBaseURL(),
   headers: { 'Content-Type': 'application/json' },
   timeout: 15000,
 });
@@ -47,7 +57,7 @@ api.interceptors.response.use(
           accessToken: string;
           refreshToken: string;
           user: import('@agendaflow/shared').AuthenticatedUser;
-        }>(`${API_URL}/api/v1/auth/refresh`, { refreshToken });
+        }>('/backend/auth/refresh', { refreshToken });
 
         setAuth(data.user, data.accessToken, data.refreshToken);
 
