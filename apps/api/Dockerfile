@@ -48,10 +48,11 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
 
-# Sobrescrever o symlink com diretório real para evitar broken link no runner
+# Substituir symlink pnpm por cópia real com estrutura correta:
+# package.json diz "main": "./dist/index.js" → dist/ deve ser subpasta
 RUN rm -rf node_modules/@agendaflow/shared && \
-    mkdir -p node_modules/@agendaflow/shared && \
-    cp -r /app/packages/shared/dist/. node_modules/@agendaflow/shared/ && \
+    mkdir -p node_modules/@agendaflow/shared/dist && \
+    cp -r /app/packages/shared/dist/. node_modules/@agendaflow/shared/dist/ && \
     cp /app/packages/shared/package.json node_modules/@agendaflow/shared/package.json
 
 EXPOSE 3001
