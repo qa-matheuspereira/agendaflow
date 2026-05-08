@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 RUN npm install -g pnpm@9.15.4
 
 FROM base AS builder
-RUN npm install -g @nestjs/cli typescript@5.7.3
+RUN npm install -g @nestjs/cli typescript@5.7.3 prisma@6
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
@@ -10,7 +10,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm --filter @agendaflow/api exec prisma generate
+RUN prisma generate --schema=apps/api/prisma/schema.prisma
 RUN pnpm --filter @agendaflow/shared build || true
 RUN pnpm --filter @agendaflow/api build
 
