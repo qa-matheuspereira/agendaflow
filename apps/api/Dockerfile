@@ -6,9 +6,10 @@ RUN npm install -g prisma@6
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
-RUN pnpm install --frozen-lockfile --shamefully-hoist
+RUN pnpm install --frozen-lockfile
 COPY . .
 RUN prisma generate --schema=apps/api/prisma/schema.prisma
 RUN pnpm --filter @agendaflow/shared build || true
