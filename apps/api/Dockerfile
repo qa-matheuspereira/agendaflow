@@ -10,7 +10,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN node_modules/.bin/prisma generate --schema=apps/api/prisma/schema.prisma
+RUN pnpm --filter @agendaflow/api exec prisma generate
 RUN pnpm --filter @agendaflow/shared build || true
 RUN pnpm --filter @agendaflow/api build
 
