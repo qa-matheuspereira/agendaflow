@@ -16,19 +16,15 @@ RUN echo "node-linker=hoisted" > .npmrc && \
 # 2. Copiar código fonte
 COPY . .
 
-# 3. Build do pacote shared PRIMEIRO (sem || true — falha explícita)
+# 3. Build do pacote shared
 RUN cd packages/shared && npx tsc --project tsconfig.json
-
-# 4. Verificar build do shared
 RUN test -s packages/shared/dist/index.js || \
-    (echo "ERRO: packages/shared/dist/index.js está vazio ou não existe" && exit 1)
-RUN test -s packages/shared/dist/enums/index.js || \
-    (echo "ERRO: packages/shared/dist/enums/index.js está vazio ou não existe" && exit 1)
+    (echo "ERRO: shared/dist/index.js vazio" && exit 1)
 
-# 5. Gerar Prisma Client
+# 4. Gerar Prisma Client
 RUN node_modules/.bin/prisma generate --schema=apps/api/prisma/schema.prisma
 
-# 6. Build da API
+# 5. Build da API
 RUN cd apps/api && nest build
 
 # ─── Runner image ─────────────────────────────────────────────────────────────
@@ -41,15 +37,14 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
 COPY --from=builder /app/apps/api/prisma ./apps/api/prisma
 
-# node_modules hoisted (inclui @agendaflow/shared symlink resolvido)
+# node_modules hoisted
 COPY --from=builder /app/node_modules ./node_modules
 
-# Shared compilado — necessário porque o dist da API faz require relativo
+# Shared compilado
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/package.json
 
-# Substituir symlink pnpm por cópia real com estrutura correta:
-# package.json diz "main": "./dist/index.js" → dist/ deve ser subpasta
+# Substituir symlink pnpm por cópia real com estrutura correta
 RUN rm -rf node_modules/@agendaflow/shared && \
     mkdir -p node_modules/@agendaflow/shared/dist && \
     cp -r /app/packages/shared/dist/. node_modules/@agendaflow/shared/dist/ && \
@@ -57,4 +52,8 @@ RUN rm -rf node_modules/@agendaflow/shared && \
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "node_modules/.bin/prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss && node apps/api/dist/main"]
+# db push → seed (JS puro, idempotente) → start API
+CMD ["sh", "-c", \
+  "node_modules/.bin/prisma db push --schema apps/api/prisma/schema.prisma --accept-data-loss && \
+   node apps/api/prisma/seed.js && \
+   node apps/api/dist/main"]
