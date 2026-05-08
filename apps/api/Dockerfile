@@ -3,13 +3,13 @@ RUN npm install -g pnpm@9.15.4
 
 FROM base AS builder
 WORKDIR /app
-COPY .npmrc ./
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/config/package.json ./packages/config/
-RUN pnpm install --frozen-lockfile
+RUN echo "node-linker=hoisted" > .npmrc && pnpm install --frozen-lockfile
+ENV PATH="/app/node_modules/.bin:$PATH"
 COPY . .
 RUN PRISMA_GENERATE_SKIP_AUTOINSTALL=1 node_modules/.bin/prisma generate --schema=apps/api/prisma/schema.prisma
 RUN pnpm --filter @agendaflow/shared build || true
