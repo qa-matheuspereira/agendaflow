@@ -168,62 +168,98 @@ export class SettingsService {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
     if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
 
-    // Verificar se Evolution API está configurada
-    if (!this.evolutionUrl || this.evolutionUrl.includes('localhost:8080')) {
-      const isReachable = await axios.get(`${this.evolutionUrl}/`, { timeout: 3000 })
-        .then(() => true)
-        .catch(() => false);
+    const headers = this.evoHeaders();
+    const instanceName = config.instanceName;
 
-      if (!isReachable) {
-        return {
-          qrcode: null,
-          error: 'Evolution API não está disponível. Configure EVOLUTION_API_URL com a URL correta e certifique-se que o serviço está rodando.',
-        };
+    // 1) Tentar conectar instância existente (retorna QR se desconectada)
+    try {
+      const connectRes = await axios.get(
+        `${this.evolutionUrl}/instance/connect/${instanceName}`,
+        { headers, timeout: 15000 },
+      );
+      const base64 = connectRes.data?.base64 ?? connectRes.data?.qrcode?.base64 ?? null;
+      if (base64) {
+        this.logger.log(`QR obtido via connect para ${instanceName}`);
+        return { qrcode: base64 };
+      }
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status;
+        this.logger.debug(`connect ${instanceName} status=${status}`);
+
+        // Instância não existe — criar abaixo
+        if (status === 404) {
+          return this.createInstanceAndGetQr(instanceName, headers);
+        }
+
+        // Connection refused
+        if (!err.response) {
+          return {
+            qrcode: null,
+            error: 'Não foi possível conectar à Evolution API. Verifique se o serviço está rodando.',
+          };
+        }
       }
     }
 
+    // 2) Tentar buscar QR code diretamente
     try {
-      // Tenta buscar QR de instância existente
-      const res = await axios.get(
-        `${this.evolutionUrl}/instance/qrcode/base64/${config.instanceName}`,
-        { headers: this.evoHeaders(), timeout: 10000 },
+      const qrRes = await axios.get(
+        `${this.evolutionUrl}/instance/qrcode/base64/${instanceName}`,
+        { headers, timeout: 10000 },
       );
-      const base64 = res.data?.qrcode?.base64 ?? res.data?.base64 ?? null;
+      const base64 = qrRes.data?.qrcode?.base64 ?? qrRes.data?.base64 ?? null;
+      if (base64) return { qrcode: base64 };
+    } catch {
+      this.logger.debug(`qrcode/base64 não disponível para ${instanceName}`);
+    }
+
+    // 3) Se nenhum QR obtido, tentar criar instância
+    return this.createInstanceAndGetQr(instanceName, headers);
+  }
+
+  private async createInstanceAndGetQr(
+    instanceName: string,
+    headers: Record<string, string>,
+  ): Promise<{ qrcode: string | null; error?: string }> {
+    try {
+      const createRes = await axios.post(
+        `${this.evolutionUrl}/instance/create`,
+        {
+          instanceName,
+          integration: 'WHATSAPP-BAILEYS',
+          token: this.evolutionKey,
+          qrcode: true,
+        },
+        { headers, timeout: 15000 },
+      );
+      const base64 = createRes.data?.qrcode?.base64 ?? createRes.data?.base64 ?? null;
+      this.logger.log(`Instância ${instanceName} criada, QR: ${base64 ? 'SIM' : 'NÃO'}`);
       return { qrcode: base64 };
-    } catch (err: unknown) {
-      // Instância não existe — criar
-      if (axios.isAxiosError(err) && err.response?.status === 404) {
-        try {
-          const createRes = await axios.post(
-            `${this.evolutionUrl}/instance/create`,
-            {
-              instanceName: config.instanceName,
-              integration: 'WHATSAPP-BAILEYS',
-              token: this.evolutionKey,
-              qrcode: true,
-            },
-            { headers: this.evoHeaders(), timeout: 15000 },
-          );
-          const base64 = createRes.data?.qrcode?.base64 ?? createRes.data?.base64 ?? null;
-          return { qrcode: base64 };
-        } catch (createErr: unknown) {
-          const msg = axios.isAxiosError(createErr)
-            ? JSON.stringify(createErr.response?.data ?? createErr.message)
-            : String(createErr);
-          this.logger.error(`Falha ao criar instância Evolution: ${msg}`);
-          return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
+    } catch (createErr: unknown) {
+      if (axios.isAxiosError(createErr)) {
+        const body = createErr.response?.data;
+
+        // Já existe — tentar connect novamente
+        if (createErr.response?.status === 403 && JSON.stringify(body).includes('already in use')) {
+          this.logger.log(`Instância ${instanceName} já existe, tentando connect...`);
+          try {
+            const connectRes = await axios.get(
+              `${this.evolutionUrl}/instance/connect/${instanceName}`,
+              { headers, timeout: 15000 },
+            );
+            const base64 = connectRes.data?.base64 ?? connectRes.data?.qrcode?.base64 ?? null;
+            return { qrcode: base64 };
+          } catch {
+            return { qrcode: null, error: 'Instância existe mas não foi possível obter QR. Tente novamente.' };
+          }
         }
-      }
 
-      // Connection refused / timeout
-      if (axios.isAxiosError(err) && !err.response) {
-        return {
-          qrcode: null,
-          error: 'Não foi possível conectar à Evolution API. Verifique se o serviço está rodando.',
-        };
+        const msg = JSON.stringify(body ?? createErr.message);
+        this.logger.error(`Falha ao criar instância ${instanceName}: ${msg}`);
+        return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
       }
-
-      return { qrcode: null, error: 'Falha ao gerar QR Code' };
+      return { qrcode: null, error: 'Erro inesperado ao criar instância' };
     }
   }
 
