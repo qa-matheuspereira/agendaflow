@@ -207,31 +207,48 @@ export class SettingsService {
       return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
     }
 
-    // 4) QR não veio no create — poll connect até 3x
-    for (let i = 0; i < 3; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    // 4) QR não veio no create — poll connect até 12x (48s)
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+
+      // Tenta /instance/connect primeiro
       try {
         const res = await axios.get(
           `${this.evolutionUrl}/instance/connect/${name}`,
           { headers: h, timeout: 15000 },
         );
-        this.logger.warn(`[QR] CONNECT[${i}] ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
-        this.logger.warn(`[QR] CONNECT[${i}] data: ${JSON.stringify(res.data).slice(0, 800)}`);
+        this.logger.warn(`[QR] CONNECT[${i}] ${name} → ${res.status} | data: ${JSON.stringify(res.data)}`);
 
         const qr = this.findQr(res.data);
         if (qr) {
-          this.logger.warn(`[QR] ✅ QR obtido via CONNECT[${i}] (${qr.length} chars)`);
+          this.logger.warn(`[QR] ✅ QR via CONNECT[${i}] (${qr.length} chars)`);
           return { qrcode: qr };
         }
       } catch (e: unknown) {
-        const msg = axios.isAxiosError(e)
-          ? `status=${e.response?.status}`
-          : String(e);
-        this.logger.warn(`[QR] CONNECT[${i}] falhou: ${msg}`);
+        const msg = axios.isAxiosError(e) ? `${e.response?.status}` : String(e);
+        this.logger.warn(`[QR] CONNECT[${i}] erro: ${msg}`);
+      }
+
+      // Tenta /instance/qrcode/base64 como alternativa
+      try {
+        const res = await axios.get(
+          `${this.evolutionUrl}/instance/qrcode/base64/${name}`,
+          { headers: h, timeout: 10000 },
+        );
+        this.logger.warn(`[QR] QRCODE[${i}] ${name} → ${res.status} | data: ${JSON.stringify(res.data).slice(0, 400)}`);
+
+        const qr = this.findQr(res.data);
+        if (qr) {
+          this.logger.warn(`[QR] ✅ QR via QRCODE[${i}] (${qr.length} chars)`);
+          return { qrcode: qr };
+        }
+      } catch (e: unknown) {
+        const msg = axios.isAxiosError(e) ? `${e.response?.status}` : String(e);
+        this.logger.warn(`[QR] QRCODE[${i}] erro: ${msg}`);
       }
     }
 
-    this.logger.error(`[QR] ❌ Não foi possível obter QR após delete + create + 3x connect`);
+    this.logger.error(`[QR] ❌ Não foi possível obter QR após delete + create + 12x connect`);
     return { qrcode: null, error: 'QR não disponível. Verifique os logs da Evolution API.' };
   }
 
