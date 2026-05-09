@@ -99,7 +99,7 @@ export function useWhatsappConnection() {
 export function useGenerateQr() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<QrResponse>('/settings/whatsapp/qr').then((res) => res.data),
+    mutationFn: () => api.post<QrResponse>('/settings/whatsapp/qr', {}, { timeout: 60000 }).then((res) => res.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['settings', 'whatsapp', 'connection'] });
     },

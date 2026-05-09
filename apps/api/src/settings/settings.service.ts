@@ -168,172 +168,94 @@ export class SettingsService {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
     if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
 
-    const headers = this.evoHeaders();
-    const instanceName = config.instanceName;
-    this.logger.log(`[QR] Início para ${instanceName} | URL: ${this.evolutionUrl}`);
+    const h = this.evoHeaders();
+    const name = config.instanceName;
+    this.logger.warn(`[QR] ▶ Início para ${name} | evoURL: ${this.evolutionUrl}`);
 
-    // 1) Tentar connect (retorna QR se instância existe e está desconectada)
-    const connectQr = await this.evoConnect(instanceName, headers);
-    if (connectQr.qrcode) return connectQr;
-
-    // 2) Se connect falhou com 404, criar instância nova
-    if (connectQr.notFound) {
-      return this.evoCreateInstance(instanceName, headers);
+    // 1) Deletar instância existente (limpar estado preso)
+    try {
+      const del = await axios.delete(`${this.evolutionUrl}/instance/delete/${name}`, { headers: h, timeout: 10000 });
+      this.logger.warn(`[QR] DELETE ${name} → ${del.status}`);
+    } catch (e: unknown) {
+      const s = axios.isAxiosError(e) ? e.response?.status ?? 'NO_RESP' : 'ERR';
+      this.logger.warn(`[QR] DELETE ${name} → ${s} (ok, pode não existir)`);
     }
 
-    // 3) Connect deu 200 mas sem QR — instância pode estar presa
-    //    Deletar e recriar
-    this.logger.warn(`[QR] Instância ${instanceName} sem QR no connect. Deletando e recriando...`);
-    await this.evoDeleteInstance(instanceName, headers);
-
-    // Aguardar 2s para a Evolution processar
+    // 2) Aguardar Evolution processar
     await new Promise((r) => setTimeout(r, 2000));
 
-    return this.evoCreateInstance(instanceName, headers);
+    // 3) Criar instância nova
+    try {
+      const res = await axios.post(
+        `${this.evolutionUrl}/instance/create`,
+        { instanceName: name, integration: 'WHATSAPP-BAILEYS', token: this.evolutionKey, qrcode: true },
+        { headers: h, timeout: 30000 },
+      );
+      this.logger.warn(`[QR] CREATE ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})} | dataLen: ${JSON.stringify(res.data).length}`);
+      this.logger.warn(`[QR] CREATE data: ${JSON.stringify(res.data).slice(0, 800)}`);
+
+      const qr = this.findQr(res.data);
+      if (qr) {
+        this.logger.warn(`[QR] ✅ QR obtido via CREATE (${qr.length} chars)`);
+        return { qrcode: qr };
+      }
+    } catch (e: unknown) {
+      const msg = axios.isAxiosError(e)
+        ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 500)}`
+        : String(e);
+      this.logger.error(`[QR] CREATE falhou: ${msg}`);
+      return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
+    }
+
+    // 4) QR não veio no create — poll connect até 3x
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        const res = await axios.get(
+          `${this.evolutionUrl}/instance/connect/${name}`,
+          { headers: h, timeout: 15000 },
+        );
+        this.logger.warn(`[QR] CONNECT[${i}] ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
+        this.logger.warn(`[QR] CONNECT[${i}] data: ${JSON.stringify(res.data).slice(0, 800)}`);
+
+        const qr = this.findQr(res.data);
+        if (qr) {
+          this.logger.warn(`[QR] ✅ QR obtido via CONNECT[${i}] (${qr.length} chars)`);
+          return { qrcode: qr };
+        }
+      } catch (e: unknown) {
+        const msg = axios.isAxiosError(e)
+          ? `status=${e.response?.status}`
+          : String(e);
+        this.logger.warn(`[QR] CONNECT[${i}] falhou: ${msg}`);
+      }
+    }
+
+    this.logger.error(`[QR] ❌ Não foi possível obter QR após delete + create + 3x connect`);
+    return { qrcode: null, error: 'QR não disponível. Verifique os logs da Evolution API.' };
   }
 
-  private extractQrBase64(data: unknown): string | null {
+  /** Tenta extrair QR base64 de qualquer formato da Evolution API v2 */
+  private findQr(data: unknown): string | null {
     if (!data || typeof data !== 'object') return null;
     const d = data as Record<string, unknown>;
-
-    // Evolution v2 retorna em diversos formatos dependendo do endpoint
-    // /instance/connect → { base64: "data:image/..." }
-    // /instance/create  → { qrcode: { base64: "data:image/..." } }
-    // /instance/qrcode  → { base64: "data:image/..." } ou { qrcode: { base64: "..." } }
     const candidates = [
       d.base64,
       (d.qrcode as Record<string, unknown>)?.base64,
-      d.code, // string QR code (não imagem)
+      d.code,
     ];
-
     for (const c of candidates) {
       if (typeof c === 'string' && c.length > 50) return c;
     }
+    // Deep search — some versions nest in .instance or .data
+    for (const key of Object.keys(d)) {
+      const val = d[key];
+      if (val && typeof val === 'object') {
+        const nested = this.findQr(val);
+        if (nested) return nested;
+      }
+    }
     return null;
-  }
-
-  private async evoConnect(
-    instanceName: string,
-    headers: Record<string, string>,
-  ): Promise<{ qrcode: string | null; notFound?: boolean; error?: string }> {
-    try {
-      const res = await axios.get(
-        `${this.evolutionUrl}/instance/connect/${instanceName}`,
-        { headers, timeout: 15000 },
-      );
-      this.logger.log(`[QR] connect ${instanceName} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
-      this.logger.debug(`[QR] connect data: ${JSON.stringify(res.data).slice(0, 500)}`);
-
-      const base64 = this.extractQrBase64(res.data);
-      if (base64) {
-        this.logger.log(`[QR] ✅ QR obtido via connect (${base64.length} chars)`);
-        return { qrcode: base64 };
-      }
-      return { qrcode: null };
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err)) {
-        const status = err.response?.status;
-        const body = err.response?.data;
-        this.logger.warn(`[QR] connect ${instanceName} falhou: status=${status} body=${JSON.stringify(body).slice(0, 300)}`);
-
-        if (status === 404) return { qrcode: null, notFound: true };
-        if (!err.response) return { qrcode: null, error: 'Evolution API inacessível' };
-      }
-      return { qrcode: null, error: 'Erro no connect' };
-    }
-  }
-
-  private async evoCreateInstance(
-    instanceName: string,
-    headers: Record<string, string>,
-  ): Promise<{ qrcode: string | null; error?: string }> {
-    try {
-      this.logger.log(`[QR] Criando instância ${instanceName}...`);
-      const res = await axios.post(
-        `${this.evolutionUrl}/instance/create`,
-        {
-          instanceName,
-          integration: 'WHATSAPP-BAILEYS',
-          token: this.evolutionKey,
-          qrcode: true,
-        },
-        { headers, timeout: 20000 },
-      );
-      this.logger.log(`[QR] create ${instanceName} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
-      this.logger.debug(`[QR] create data: ${JSON.stringify(res.data).slice(0, 500)}`);
-
-      const base64 = this.extractQrBase64(res.data);
-      if (base64) {
-        this.logger.log(`[QR] ✅ QR obtido via create (${base64.length} chars)`);
-        return { qrcode: base64 };
-      }
-
-      // QR pode não vir no create — tentar connect logo após
-      this.logger.log(`[QR] Create OK mas sem QR. Tentando connect...`);
-      await new Promise((r) => setTimeout(r, 1500));
-      const connectResult = await this.evoConnect(instanceName, headers);
-      if (connectResult.qrcode) return connectResult;
-
-      return { qrcode: null, error: 'Instância criada mas QR não disponível. Clique novamente.' };
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err)) {
-        const body = err.response?.data;
-        const status = err.response?.status;
-        this.logger.error(`[QR] create falhou: status=${status} body=${JSON.stringify(body).slice(0, 500)}`);
-
-        // "already in use" → deletar e recriar
-        if (status === 403 || (status === 400 && JSON.stringify(body).includes('already'))) {
-          this.logger.warn(`[QR] Instância ${instanceName} já existe. Deletando e recriando...`);
-          await this.evoDeleteInstance(instanceName, headers);
-          await new Promise((r) => setTimeout(r, 2000));
-
-          // Tentar criar de novo (sem recursão infinita — apenas 1 retry)
-          try {
-            const retryRes = await axios.post(
-              `${this.evolutionUrl}/instance/create`,
-              {
-                instanceName,
-                integration: 'WHATSAPP-BAILEYS',
-                token: this.evolutionKey,
-                qrcode: true,
-              },
-              { headers, timeout: 20000 },
-            );
-            this.logger.log(`[QR] retry create → ${retryRes.status}`);
-            const base64 = this.extractQrBase64(retryRes.data);
-            if (base64) return { qrcode: base64 };
-
-            // Último recurso: connect
-            await new Promise((r) => setTimeout(r, 1500));
-            return this.evoConnect(instanceName, headers);
-          } catch (retryErr: unknown) {
-            const retryMsg = axios.isAxiosError(retryErr)
-              ? JSON.stringify(retryErr.response?.data)
-              : String(retryErr);
-            this.logger.error(`[QR] retry create falhou: ${retryMsg}`);
-            return { qrcode: null, error: 'Falha ao recriar instância após cleanup' };
-          }
-        }
-
-        return { qrcode: null, error: `Falha ao criar instância (${status})` };
-      }
-      return { qrcode: null, error: 'Erro inesperado ao criar instância' };
-    }
-  }
-
-  private async evoDeleteInstance(instanceName: string, headers: Record<string, string>): Promise<void> {
-    try {
-      // Evolution v2 usa DELETE /instance/delete/{name}
-      await axios.delete(
-        `${this.evolutionUrl}/instance/delete/${instanceName}`,
-        { headers, timeout: 10000 },
-      );
-      this.logger.log(`[QR] Instância ${instanceName} deletada`);
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err)) {
-        this.logger.warn(`[QR] delete ${instanceName} falhou: ${err.response?.status}`);
-      }
-    }
   }
 
   async disconnectWhatsapp(companyId: string) {
