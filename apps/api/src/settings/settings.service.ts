@@ -21,6 +21,8 @@ export class SettingsService {
   ) {
     this.evolutionUrl = this.config.get<string>('evolution.apiUrl') ?? 'http://localhost:8080';
     this.evolutionKey = this.config.get<string>('evolution.apiKey') ?? '';
+    this.logger.log(`Evolution API URL: ${this.evolutionUrl}`);
+    this.logger.log(`Evolution API Key: ${this.evolutionKey ? '***' + this.evolutionKey.slice(-4) : 'NOT SET'}`);
   }
 
   async getBusinessRules(companyId: string) {

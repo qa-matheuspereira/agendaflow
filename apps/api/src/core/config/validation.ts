@@ -17,7 +17,7 @@ export const validationSchema = Joi.object({
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_EXPIRY: Joi.string().default('7d'),
 
-  EVOLUTION_API_URL: Joi.string().uri().default('http://localhost:8080'),
+  EVOLUTION_API_URL: Joi.string().default('http://localhost:8080'),
   EVOLUTION_API_KEY: Joi.string().optional(),
 
   MP_PLATFORM_ACCESS_TOKEN: Joi.string().optional(),
