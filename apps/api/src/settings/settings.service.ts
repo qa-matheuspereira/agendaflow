@@ -198,15 +198,20 @@ export class SettingsService {
             `${this.evolutionUrl}/instance/create`,
             {
               instanceName: config.instanceName,
+              integration: 'WHATSAPP-BAILEYS',
               token: this.evolutionKey,
               qrcode: true,
             },
-            { headers: this.evoHeaders(), timeout: 10000 },
+            { headers: this.evoHeaders(), timeout: 15000 },
           );
-          const base64 = createRes.data?.qrcode?.base64 ?? null;
+          const base64 = createRes.data?.qrcode?.base64 ?? createRes.data?.base64 ?? null;
           return { qrcode: base64 };
-        } catch {
-          return { qrcode: null, error: 'Falha ao criar instância na Evolution API' };
+        } catch (createErr: unknown) {
+          const msg = axios.isAxiosError(createErr)
+            ? JSON.stringify(createErr.response?.data ?? createErr.message)
+            : String(createErr);
+          this.logger.error(`Falha ao criar instância Evolution: ${msg}`);
+          return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
         }
       }
 
