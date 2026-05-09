@@ -170,60 +170,86 @@ export class SettingsService {
 
     const headers = this.evoHeaders();
     const instanceName = config.instanceName;
+    this.logger.log(`[QR] Início para ${instanceName} | URL: ${this.evolutionUrl}`);
 
-    // 1) Tentar conectar instância existente (retorna QR se desconectada)
+    // 1) Tentar connect (retorna QR se instância existe e está desconectada)
+    const connectQr = await this.evoConnect(instanceName, headers);
+    if (connectQr.qrcode) return connectQr;
+
+    // 2) Se connect falhou com 404, criar instância nova
+    if (connectQr.notFound) {
+      return this.evoCreateInstance(instanceName, headers);
+    }
+
+    // 3) Connect deu 200 mas sem QR — instância pode estar presa
+    //    Deletar e recriar
+    this.logger.warn(`[QR] Instância ${instanceName} sem QR no connect. Deletando e recriando...`);
+    await this.evoDeleteInstance(instanceName, headers);
+
+    // Aguardar 2s para a Evolution processar
+    await new Promise((r) => setTimeout(r, 2000));
+
+    return this.evoCreateInstance(instanceName, headers);
+  }
+
+  private extractQrBase64(data: unknown): string | null {
+    if (!data || typeof data !== 'object') return null;
+    const d = data as Record<string, unknown>;
+
+    // Evolution v2 retorna em diversos formatos dependendo do endpoint
+    // /instance/connect → { base64: "data:image/..." }
+    // /instance/create  → { qrcode: { base64: "data:image/..." } }
+    // /instance/qrcode  → { base64: "data:image/..." } ou { qrcode: { base64: "..." } }
+    const candidates = [
+      d.base64,
+      (d.qrcode as Record<string, unknown>)?.base64,
+      d.code, // string QR code (não imagem)
+    ];
+
+    for (const c of candidates) {
+      if (typeof c === 'string' && c.length > 50) return c;
+    }
+    return null;
+  }
+
+  private async evoConnect(
+    instanceName: string,
+    headers: Record<string, string>,
+  ): Promise<{ qrcode: string | null; notFound?: boolean; error?: string }> {
     try {
-      const connectRes = await axios.get(
+      const res = await axios.get(
         `${this.evolutionUrl}/instance/connect/${instanceName}`,
         { headers, timeout: 15000 },
       );
-      const base64 = connectRes.data?.base64 ?? connectRes.data?.qrcode?.base64 ?? null;
+      this.logger.log(`[QR] connect ${instanceName} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
+      this.logger.debug(`[QR] connect data: ${JSON.stringify(res.data).slice(0, 500)}`);
+
+      const base64 = this.extractQrBase64(res.data);
       if (base64) {
-        this.logger.log(`QR obtido via connect para ${instanceName}`);
+        this.logger.log(`[QR] ✅ QR obtido via connect (${base64.length} chars)`);
         return { qrcode: base64 };
       }
+      return { qrcode: null };
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
         const status = err.response?.status;
-        this.logger.debug(`connect ${instanceName} status=${status}`);
+        const body = err.response?.data;
+        this.logger.warn(`[QR] connect ${instanceName} falhou: status=${status} body=${JSON.stringify(body).slice(0, 300)}`);
 
-        // Instância não existe — criar abaixo
-        if (status === 404) {
-          return this.createInstanceAndGetQr(instanceName, headers);
-        }
-
-        // Connection refused
-        if (!err.response) {
-          return {
-            qrcode: null,
-            error: 'Não foi possível conectar à Evolution API. Verifique se o serviço está rodando.',
-          };
-        }
+        if (status === 404) return { qrcode: null, notFound: true };
+        if (!err.response) return { qrcode: null, error: 'Evolution API inacessível' };
       }
+      return { qrcode: null, error: 'Erro no connect' };
     }
-
-    // 2) Tentar buscar QR code diretamente
-    try {
-      const qrRes = await axios.get(
-        `${this.evolutionUrl}/instance/qrcode/base64/${instanceName}`,
-        { headers, timeout: 10000 },
-      );
-      const base64 = qrRes.data?.qrcode?.base64 ?? qrRes.data?.base64 ?? null;
-      if (base64) return { qrcode: base64 };
-    } catch {
-      this.logger.debug(`qrcode/base64 não disponível para ${instanceName}`);
-    }
-
-    // 3) Se nenhum QR obtido, tentar criar instância
-    return this.createInstanceAndGetQr(instanceName, headers);
   }
 
-  private async createInstanceAndGetQr(
+  private async evoCreateInstance(
     instanceName: string,
     headers: Record<string, string>,
   ): Promise<{ qrcode: string | null; error?: string }> {
     try {
-      const createRes = await axios.post(
+      this.logger.log(`[QR] Criando instância ${instanceName}...`);
+      const res = await axios.post(
         `${this.evolutionUrl}/instance/create`,
         {
           instanceName,
@@ -231,35 +257,82 @@ export class SettingsService {
           token: this.evolutionKey,
           qrcode: true,
         },
-        { headers, timeout: 15000 },
+        { headers, timeout: 20000 },
       );
-      const base64 = createRes.data?.qrcode?.base64 ?? createRes.data?.base64 ?? null;
-      this.logger.log(`Instância ${instanceName} criada, QR: ${base64 ? 'SIM' : 'NÃO'}`);
-      return { qrcode: base64 };
-    } catch (createErr: unknown) {
-      if (axios.isAxiosError(createErr)) {
-        const body = createErr.response?.data;
+      this.logger.log(`[QR] create ${instanceName} → ${res.status} | keys: ${Object.keys(res.data ?? {})}`);
+      this.logger.debug(`[QR] create data: ${JSON.stringify(res.data).slice(0, 500)}`);
 
-        // Já existe — tentar connect novamente
-        if (createErr.response?.status === 403 && JSON.stringify(body).includes('already in use')) {
-          this.logger.log(`Instância ${instanceName} já existe, tentando connect...`);
+      const base64 = this.extractQrBase64(res.data);
+      if (base64) {
+        this.logger.log(`[QR] ✅ QR obtido via create (${base64.length} chars)`);
+        return { qrcode: base64 };
+      }
+
+      // QR pode não vir no create — tentar connect logo após
+      this.logger.log(`[QR] Create OK mas sem QR. Tentando connect...`);
+      await new Promise((r) => setTimeout(r, 1500));
+      const connectResult = await this.evoConnect(instanceName, headers);
+      if (connectResult.qrcode) return connectResult;
+
+      return { qrcode: null, error: 'Instância criada mas QR não disponível. Clique novamente.' };
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const body = err.response?.data;
+        const status = err.response?.status;
+        this.logger.error(`[QR] create falhou: status=${status} body=${JSON.stringify(body).slice(0, 500)}`);
+
+        // "already in use" → deletar e recriar
+        if (status === 403 || (status === 400 && JSON.stringify(body).includes('already'))) {
+          this.logger.warn(`[QR] Instância ${instanceName} já existe. Deletando e recriando...`);
+          await this.evoDeleteInstance(instanceName, headers);
+          await new Promise((r) => setTimeout(r, 2000));
+
+          // Tentar criar de novo (sem recursão infinita — apenas 1 retry)
           try {
-            const connectRes = await axios.get(
-              `${this.evolutionUrl}/instance/connect/${instanceName}`,
-              { headers, timeout: 15000 },
+            const retryRes = await axios.post(
+              `${this.evolutionUrl}/instance/create`,
+              {
+                instanceName,
+                integration: 'WHATSAPP-BAILEYS',
+                token: this.evolutionKey,
+                qrcode: true,
+              },
+              { headers, timeout: 20000 },
             );
-            const base64 = connectRes.data?.base64 ?? connectRes.data?.qrcode?.base64 ?? null;
-            return { qrcode: base64 };
-          } catch {
-            return { qrcode: null, error: 'Instância existe mas não foi possível obter QR. Tente novamente.' };
+            this.logger.log(`[QR] retry create → ${retryRes.status}`);
+            const base64 = this.extractQrBase64(retryRes.data);
+            if (base64) return { qrcode: base64 };
+
+            // Último recurso: connect
+            await new Promise((r) => setTimeout(r, 1500));
+            return this.evoConnect(instanceName, headers);
+          } catch (retryErr: unknown) {
+            const retryMsg = axios.isAxiosError(retryErr)
+              ? JSON.stringify(retryErr.response?.data)
+              : String(retryErr);
+            this.logger.error(`[QR] retry create falhou: ${retryMsg}`);
+            return { qrcode: null, error: 'Falha ao recriar instância após cleanup' };
           }
         }
 
-        const msg = JSON.stringify(body ?? createErr.message);
-        this.logger.error(`Falha ao criar instância ${instanceName}: ${msg}`);
-        return { qrcode: null, error: `Falha ao criar instância: ${msg}` };
+        return { qrcode: null, error: `Falha ao criar instância (${status})` };
       }
       return { qrcode: null, error: 'Erro inesperado ao criar instância' };
+    }
+  }
+
+  private async evoDeleteInstance(instanceName: string, headers: Record<string, string>): Promise<void> {
+    try {
+      // Evolution v2 usa DELETE /instance/delete/{name}
+      await axios.delete(
+        `${this.evolutionUrl}/instance/delete/${instanceName}`,
+        { headers, timeout: 10000 },
+      );
+      this.logger.log(`[QR] Instância ${instanceName} deletada`);
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        this.logger.warn(`[QR] delete ${instanceName} falhou: ${err.response?.status}`);
+      }
     }
   }
 
