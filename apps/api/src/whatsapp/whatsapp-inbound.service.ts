@@ -103,9 +103,12 @@ export class WhatsappInboundService {
       if (resolved) lookupNumber = resolved;
     }
 
-    // sendNumber: número usado para ENVIAR mensagens (precisa ser telefone, não @lid)
-    // Se @lid não foi resolvido, usa os dígitos do @lid (pode funcionar em alguns casos)
-    const sendNumber = isLid ? lookupNumber : rawNumber;
+    // sendNumber: número usado para ENVIAR mensagens
+    // rawNumber já tem o formato correto:
+    //   @lid contacts → "15930184695888@lid" (o patch da Evolution bypassa validação pra @lid)
+    //   @s.whatsapp.net → "5511999999999" (dígitos, Evolution cria @s.whatsapp.net)
+    // lookupNumber é apenas para DB lookup e conversationState
+    const sendNumber = rawNumber;
 
     this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber}`);
 
