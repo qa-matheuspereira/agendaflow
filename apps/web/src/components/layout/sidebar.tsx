@@ -13,8 +13,10 @@ import {
   Settings,
   ListOrdered,
   ScrollText,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useSidebar } from '@/providers/sidebar-provider';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,53 +36,87 @@ const settingsItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { open, close } = useSidebar();
 
   return (
-    <aside className="flex w-64 flex-col border-r bg-sidebar">
-      <div className="flex h-16 items-center border-b border-sidebar-border px-6">
-        <span className="text-lg font-bold text-sidebar-foreground">AgendaFlow</span>
-      </div>
+    <>
+      {/* Mobile overlay */}
+      {open && (
+        <div
+          className="fixed inset-0 z-20 bg-black/50 md:hidden"
+          onClick={close}
+        />
+      )}
 
-      <nav className="flex-1 space-y-1 overflow-auto p-4">
-        <div className="space-y-1">
-          {navItems.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                pathname === href
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-            </Link>
-          ))}
+      {/* Sidebar */}
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r bg-sidebar transition-transform duration-300 ease-in-out',
+          'md:relative md:translate-x-0 md:z-auto',
+          open ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        {/* Logo + close button */}
+        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-6">
+          <span className="text-lg font-bold text-sidebar-foreground">AgendaFlow</span>
+          {/* Close button visible only on mobile */}
+          <button
+            onClick={close}
+            className="rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+            aria-label="Fechar menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
-        <div className="mt-4 pt-4">
-          <p className="mb-2 px-3 text-xs font-semibold uppercase text-sidebar-foreground/40">
-            Configurações
-          </p>
-          {settingsItems.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                pathname === href
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {label}
-            </Link>
-          ))}
-        </div>
-      </nav>
-    </aside>
+        <nav className="flex-1 space-y-1 overflow-auto p-4">
+          <div className="space-y-1">
+            {navItems.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => {
+                  // Auto-close on mobile after navigation
+                  if (window.innerWidth < 768) close();
+                }}
+                className={cn(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  pathname === href
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+              </Link>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-4">
+            <p className="mb-2 px-3 text-xs font-semibold uppercase text-sidebar-foreground/40">
+              Configurações
+            </p>
+            {settingsItems.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                onClick={() => {
+                  if (window.innerWidth < 768) close();
+                }}
+                className={cn(
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  pathname === href
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+              </Link>
+            ))}
+          </div>
+        </nav>
+      </aside>
+    </>
   );
 }

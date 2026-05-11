@@ -1,15 +1,24 @@
 'use client';
 
-import { LogOut, Bell } from 'lucide-react';
+import { Menu, LogOut, Bell } from 'lucide-react';
 import { useAuth } from '@/providers/auth-provider';
 import { getInitials } from '@/lib/utils';
+import { useSidebar } from '@/providers/sidebar-provider';
 
 export function Header() {
   const { user, logout } = useAuth();
+  const { toggle } = useSidebar();
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-6">
-      <div />
+    <header className="flex h-16 items-center justify-between border-b bg-background px-4 md:px-6">
+      {/* Hamburger — always visible */}
+      <button
+        onClick={toggle}
+        className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        aria-label="Abrir/fechar menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
 
       <div className="flex items-center gap-3">
         <button className="relative rounded-full p-2 hover:bg-muted">
