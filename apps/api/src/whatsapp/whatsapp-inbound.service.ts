@@ -103,7 +103,11 @@ export class WhatsappInboundService {
       if (resolved) lookupNumber = resolved;
     }
 
-    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} rawNumber=${rawNumber}`);
+    // sendNumber: número usado para ENVIAR mensagens (precisa ser telefone, não @lid)
+    // Se @lid não foi resolvido, usa os dígitos do @lid (pode funcionar em alguns casos)
+    const sendNumber = isLid ? lookupNumber : rawNumber;
+
+    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber}`);
 
     const altNumber = brazilianAlternate(lookupNumber);
     const numberVariants = altNumber ? [lookupNumber, altNumber] : [lookupNumber];
@@ -185,7 +189,7 @@ export class WhatsappInboundService {
     if (collaborator) {
       await this.collaboratorBot.handle(
         instanceName,
-        rawNumber,
+        sendNumber,
         messageText,
         collaborator,
         state,
@@ -200,7 +204,7 @@ export class WhatsappInboundService {
     if (client) {
       // Known client with placeholder name → collect real name first
       if (hasPlaceholderName && step !== 'COLLECT_NAME') {
-        await this.whatsapp.sendText(instanceName, rawNumber, 'Para continuar, qual é o seu nome?');
+        await this.whatsapp.sendText(instanceName, sendNumber, 'Para continuar, qual é o seu nome?');
         await this.prisma.conversationState.update({
           where: { companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber } },
           data: { currentStep: 'COLLECT_NAME', context: {}, expiresAt: conversationExpiresAt() },
@@ -210,16 +214,16 @@ export class WhatsappInboundService {
 
       // Client already has real name but landed in COLLECT_NAME → skip to menu
       if (step === 'COLLECT_NAME' && !hasPlaceholderName) {
-        await this.clientBot.handleClient(instanceName, rawNumber, messageText, client, state, config, config.companyId);
+        await this.clientBot.handleClient(instanceName, sendNumber, messageText, client, state, config, config.companyId);
         return;
       }
 
       if (step === 'COLLECT_NAME' && !isExpired) {
-        await this.clientBot.handleNameCollection(instanceName, rawNumber, messageText, config, config.companyId);
+        await this.clientBot.handleNameCollection(instanceName, sendNumber, messageText, config, config.companyId);
       } else if (WhatsappClientBotService.isBookingStep(step) && !isExpired) {
         await this.clientBot.handleBookingStep(
           instanceName,
-          rawNumber,
+          sendNumber,
           messageText,
           client.id,
           state,
@@ -228,7 +232,7 @@ export class WhatsappInboundService {
       } else if (step === 'MAIN_MENU' && !isExpired) {
         await this.clientBot.handleMenuReply(
           instanceName,
-          rawNumber,
+          sendNumber,
           messageText,
           client,
           config,
@@ -237,7 +241,7 @@ export class WhatsappInboundService {
       } else {
         await this.clientBot.handleClient(
           instanceName,
-          rawNumber,
+          sendNumber,
           messageText,
           client,
           state,
@@ -248,14 +252,14 @@ export class WhatsappInboundService {
       return;
     }
 
-    this.logger.log(`Remetente desconhecido ${rawNumber} (empresa: ${config.companyId})`);
+    this.logger.log(`Remetente desconhecido ${sendNumber} (empresa: ${config.companyId})`);
 
     if (step === 'COLLECT_NAME' && !isExpired) {
-      await this.clientBot.handleNameCollection(instanceName, rawNumber, messageText, config, config.companyId);
+      await this.clientBot.handleNameCollection(instanceName, sendNumber, messageText, config, config.companyId);
     } else if (WhatsappClientBotService.isBookingStep(step) && !isExpired) {
       await this.clientBot.handleBookingStep(
         instanceName,
-        rawNumber,
+        sendNumber,
         messageText,
         null,
         state,
@@ -264,14 +268,14 @@ export class WhatsappInboundService {
     } else if (step === 'MAIN_MENU' && !isExpired) {
       await this.clientBot.handleMenuReply(
         instanceName,
-        rawNumber,
+        sendNumber,
         messageText,
         null,
         config,
         config.companyId,
       );
     } else {
-      await this.clientBot.handleUnknown(instanceName, rawNumber, config, config.companyId);
+      await this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
     }
   }
 
