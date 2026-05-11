@@ -62,8 +62,8 @@ export function Sidebar() {
           <Image
             src="/logo-white.png"
             alt="Chronos.AI"
-            width={130}
-            height={36}
+            width={163}
+            height={45}
             className="object-contain"
             priority
           />
