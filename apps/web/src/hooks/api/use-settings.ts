@@ -115,3 +115,21 @@ export function useDisconnectWhatsapp() {
     },
   });
 }
+
+export interface PairingCodeResponse {
+  code: string | null;
+  error?: string;
+}
+
+export function useGeneratePairingCode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (phoneNumber: string) =>
+      api
+        .post<PairingCodeResponse>('/settings/whatsapp/pairing', { phoneNumber }, { timeout: 30000 })
+        .then((res) => res.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings', 'whatsapp', 'connection'] });
+    },
+  });
+}

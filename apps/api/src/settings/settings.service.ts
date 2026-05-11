@@ -316,4 +316,74 @@ export class SettingsService {
 
     return { disconnected: true };
   }
+
+  async generatePairingCode(companyId: string, phoneNumber: string) {
+    const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
+    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
+
+    const h = this.evoHeaders();
+    const name = config.instanceName;
+    // Normaliza: remove tudo que não é dígito
+    const cleanPhone = phoneNumber.replace(/\D/g, '');
+    this.logger.warn(`[PAIRING] Gerando código para ${name} | phone: ${cleanPhone}`);
+
+    // 1) Deletar instância existente
+    try {
+      await axios.delete(`${this.evolutionUrl}/instance/delete/${name}`, { headers: h, timeout: 10000 });
+    } catch { /* ok */ }
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // 2) Criar instância sem qrcode
+    try {
+      const webhookUrl = this.apiBaseUrl?.startsWith('http')
+        ? `${this.apiBaseUrl}/whatsapp/webhook`
+        : null;
+
+      const createPayload: Record<string, unknown> = {
+        instanceName: name,
+        token: this.evolutionKey,
+        qrcode: false,
+      };
+      if (webhookUrl) {
+        createPayload.webhook = webhookUrl;
+        createPayload.webhook_by_events = false;
+        createPayload.events = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+      }
+
+      await axios.post(
+        `${this.evolutionUrl}/instance/create`,
+        createPayload,
+        { headers: h, timeout: 30000 },
+      );
+    } catch (e: unknown) {
+      const msg = axios.isAxiosError(e)
+        ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 300)}`
+        : String(e);
+      this.logger.error(`[PAIRING] CREATE falhou: ${msg}`);
+      return { code: null, error: `Falha ao criar instância: ${msg}` };
+    }
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // 3) Solicitar pairing code
+    try {
+      const res = await axios.post(
+        `${this.evolutionUrl}/instance/pairingCode/${name}`,
+        { phoneNumber: cleanPhone },
+        { headers: h, timeout: 15000 },
+      );
+      this.logger.warn(`[PAIRING] Código obtido: ${JSON.stringify(res.data)}`);
+      const code: string = res.data?.code ?? res.data?.pairingCode ?? null;
+      if (code) return { code };
+      return { code: null, error: 'Código não retornado pela Evolution API.' };
+    } catch (e: unknown) {
+      const msg = axios.isAxiosError(e)
+        ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 300)}`
+        : String(e);
+      this.logger.error(`[PAIRING] Erro ao solicitar código: ${msg}`);
+      return { code: null, error: `Falha ao obter pairing code: ${msg}` };
+    }
+  }
 }
+

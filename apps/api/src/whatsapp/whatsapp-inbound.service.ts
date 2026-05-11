@@ -186,9 +186,6 @@ export class WhatsappInboundService {
       },
     });
 
-    // Human-like response delay
-    await new Promise((r) => setTimeout(r, 5000));
-
     if (collaborator) {
       await this.collaboratorBot.handle(
         instanceName,
@@ -255,29 +252,29 @@ export class WhatsappInboundService {
       return;
     }
 
+    // Sem cliente encontrado — resetar estado se estava em step que pressupõe cliente existente
+    // (ex: cliente foi apagado do banco mas conversationState ainda existe com MAIN_MENU)
+    const isClientStep = step === 'MAIN_MENU' || WhatsappClientBotService.isBookingStep(step);
+    if (isClientStep || isExpired) {
+      // Reset state e vai para saudação
+      await this.prisma.conversationState.update({
+        where: { companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber } },
+        data: { currentStep: 'IDLE', context: {}, expiresAt: conversationExpiresAt() },
+      });
+      this.logger.log(`Estado resetado para IDLE (cliente não encontrado) ${sendNumber}`);
+      // 5s delay apenas na saudação
+      await new Promise((r) => setTimeout(r, 5000));
+      await this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
+      return;
+    }
+
     this.logger.log(`Remetente desconhecido ${sendNumber} (empresa: ${config.companyId})`);
 
     if (step === 'COLLECT_NAME' && !isExpired) {
       await this.clientBot.handleNameCollection(instanceName, sendNumber, messageText, config, config.companyId);
-    } else if (WhatsappClientBotService.isBookingStep(step) && !isExpired) {
-      await this.clientBot.handleBookingStep(
-        instanceName,
-        sendNumber,
-        messageText,
-        null,
-        state,
-        config.companyId,
-      );
-    } else if (step === 'MAIN_MENU' && !isExpired) {
-      await this.clientBot.handleMenuReply(
-        instanceName,
-        sendNumber,
-        messageText,
-        null,
-        config,
-        config.companyId,
-      );
     } else {
+      // 5s delay apenas na saudação (primeiro contato)
+      await new Promise((r) => setTimeout(r, 5000));
       await this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
     }
   }

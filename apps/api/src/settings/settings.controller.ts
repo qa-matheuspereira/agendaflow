@@ -64,4 +64,13 @@ export class SettingsController {
   disconnectWhatsapp(@CurrentTenant() companyId: string) {
     return this.service.disconnectWhatsapp(companyId);
   }
+
+  @Post('whatsapp/pairing')
+  @ApiOperation({ summary: 'Gerar Pairing Code para conexão WhatsApp via número' })
+  generatePairingCode(
+    @CurrentTenant() companyId: string,
+    @Body() body: { phoneNumber: string },
+  ) {
+    return this.service.generatePairingCode(companyId, body.phoneNumber);
+  }
 }
