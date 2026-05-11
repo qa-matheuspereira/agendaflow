@@ -41,18 +41,41 @@ export class WhatsappService {
   }
 
   async sendText(instanceName: string, toNumber: string, message: string): Promise<string | null> {
-    try {
+    const tryNumber = async (num: string): Promise<string | null> => {
       const response = await this.http.post<EvolutionSendResponse>(
         `/message/sendText/${instanceName}`,
-        { number: toNumber, textMessage: { text: message } },
+        { number: num, textMessage: { text: message } },
       );
-      this.logger.debug(`Mensagem enviada para ${toNumber} via instância ${instanceName}`);
       return response.data?.key?.id ?? null;
+    };
+
+    try {
+      const msgId = await tryNumber(toNumber);
+      this.logger.debug(`Mensagem enviada para ${toNumber} via instância ${instanceName}`);
+      return msgId;
     } catch (error) {
       if (isAxiosError(error)) {
         const status = error.response?.status;
         const body = error.response?.data;
-        this.logger.warn(`sendText falhou para ${toNumber} (${instanceName}) status=${status}: ${JSON.stringify(body)}`);
+        const bodyStr = JSON.stringify(body);
+        this.logger.warn(`[SEND] sendText falhou para ${toNumber} (${instanceName}) status=${status}: ${bodyStr}`);
+
+        // Se falhou com "exists: false" e o número não é @lid, tenta com @lid direto
+        const isExistsError = bodyStr.includes('exists') && bodyStr.includes('false');
+        const isAlreadyLid = toNumber.includes('@lid');
+        if (isExistsError && !isAlreadyLid) {
+          const lidFallback = `${toNumber}@lid`;
+          this.logger.warn(`[SEND] Tentando fallback @lid: ${lidFallback}`);
+          try {
+            const msgId = await tryNumber(lidFallback);
+            this.logger.warn(`[SEND] ✅ Enviado via @lid fallback: ${lidFallback}`);
+            return msgId;
+          } catch (e2) {
+            if (isAxiosError(e2)) {
+              this.logger.warn(`[SEND] @lid fallback também falhou: ${e2.response?.status}: ${JSON.stringify(e2.response?.data)}`);
+            }
+          }
+        }
       } else {
         this.logger.error(`sendText erro inesperado para ${toNumber} (${instanceName}):`, error);
       }
@@ -89,47 +112,70 @@ export class WhatsappService {
     const cacheKey = `${instanceName}:${lidJid}`;
     if (this.lidCache.has(cacheKey)) return this.lidCache.get(cacheKey)!;
 
-    const endpoints = [
-      { method: 'get' as const, path: `/contact/fetchProfile/${instanceName}`, params: { number: lidJid } },
-      { method: 'get' as const, path: `/chat/fetchProfile/${instanceName}`, params: { number: lidJid } },
-    ];
+    this.logger.warn(`[LID] Tentando resolver ${lidJid} para ${instanceName}`);
 
-    for (const ep of endpoints) {
-      try {
-        const resp = await this.http[ep.method]<EvolutionContactProfile>(ep.path, { params: ep.params });
-        const wuid: string = resp.data?.wuid ?? '';
-        const phone = wuid.includes('@') ? wuid.split('@')[0] : (resp.data?.number ?? '');
-        if (phone && /^\d{10,15}$/.test(phone)) {
+    // Estratégia 1: POST /chat/whatsappNumbers — chama onWhatsApp() do Baileys
+    // Resolve @lid para o JID real via query ao servidor WhatsApp
+    try {
+      const resp = await this.http.post<Array<{ exists?: boolean; jid?: string; number?: string }>>(
+        `/chat/whatsappNumbers/${instanceName}`,
+        { numbers: [lidJid] },
+      );
+      const entries = Array.isArray(resp.data) ? resp.data : [];
+      this.logger.warn(`[LID] whatsappNumbers response: ${JSON.stringify(entries)}`);
+      for (const entry of entries) {
+        const jid: string = entry.jid ?? '';
+        const phone = jid.includes('@') ? jid.split('@')[0] : '';
+        if (phone && /^\d{8,15}$/.test(phone)) {
           this.lidCache.set(cacheKey, phone);
-          this.logger.log(`@lid ${lidJid} resolvido → ${phone} (via ${ep.path})`);
+          this.logger.warn(`[LID] ✅ Resolvido via whatsappNumbers: ${lidJid} → ${phone}`);
           return phone;
         }
-      } catch (err) {
-        if (isAxiosError(err)) {
-          this.logger.debug(`resolvePhoneFromLid ${ep.path} falhou: ${err.response?.status}`);
-        }
       }
+    } catch (err) {
+      const msg = isAxiosError(err) ? `${err.response?.status}: ${JSON.stringify(err.response?.data)}` : String(err);
+      this.logger.warn(`[LID] whatsappNumbers falhou: ${msg}`);
     }
 
-    // Tenta buscar nos contatos da instância filtrando pelo @lid
+    // Estratégia 2: GET /contact/fetchProfile com o @lid inteiro
     try {
-      const resp = await this.http.post<EvolutionContactProfile[]>(
+      const resp = await this.http.get<{ wuid?: string; number?: string }>(
+        `/contact/fetchProfile/${instanceName}`,
+        { params: { number: lidJid } },
+      );
+      this.logger.warn(`[LID] fetchProfile response: ${JSON.stringify(resp.data)}`);
+      const wuid: string = resp.data?.wuid ?? '';
+      const phone = wuid.includes('@') ? wuid.split('@')[0] : (resp.data?.number ?? '');
+      if (phone && /^\d{8,15}$/.test(phone)) {
+        this.lidCache.set(cacheKey, phone);
+        this.logger.warn(`[LID] ✅ Resolvido via fetchProfile: ${lidJid} → ${phone}`);
+        return phone;
+      }
+    } catch (err) {
+      const msg = isAxiosError(err) ? `${err.response?.status}` : String(err);
+      this.logger.warn(`[LID] fetchProfile falhou: ${msg}`);
+    }
+
+    // Estratégia 3: POST /contact/findContacts — busca nos contatos armazenados
+    try {
+      const resp = await this.http.post<Array<{ wuid?: string; number?: string; id?: string }>>(
         `/contact/findContacts/${instanceName}`,
         { where: { id: lidJid } },
       );
       const contacts = Array.isArray(resp.data) ? resp.data : [];
+      this.logger.warn(`[LID] findContacts response: ${JSON.stringify(contacts)}`);
       for (const c of contacts) {
         const wuid: string = c.wuid ?? '';
         const phone = wuid.includes('@') ? wuid.split('@')[0] : (c.number ?? '');
-        if (phone && /^\d{10,15}$/.test(phone)) {
+        if (phone && /^\d{8,15}$/.test(phone)) {
           this.lidCache.set(cacheKey, phone);
-          this.logger.log(`@lid ${lidJid} resolvido via findContacts → ${phone}`);
+          this.logger.warn(`[LID] ✅ Resolvido via findContacts: ${lidJid} → ${phone}`);
           return phone;
         }
       }
     } catch { /* ignora */ }
 
-    this.logger.debug(`@lid ${lidJid} não resolvido — usando fallback`);
+    this.logger.warn(`[LID] ❌ Não foi possível resolver ${lidJid} — sendText usará @lid direto`);
     return null;
   }
 
