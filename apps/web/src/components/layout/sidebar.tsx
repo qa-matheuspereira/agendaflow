@@ -57,24 +57,24 @@ export function Sidebar() {
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        {/* Logo branca + close button */}
+        {/* Logo branca com clique para fechar no mobile */}
         <div className="relative flex h-16 items-center justify-center border-b border-sidebar-border px-4">
-          <Image
-            src="/logo-white.png"
-            alt="Chronos.AI"
-            width={200}
-            height={55}
-            className="object-contain -mt-2"
-            priority
-          />
-          {/* Close button visible only on mobile */}
-          <button
-            onClick={close}
-            className="absolute right-4 rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+          <div 
+            onClick={() => { if (typeof window !== 'undefined' && window.innerWidth < 768) close(); }}
+            className="cursor-pointer"
+            role="button"
+            tabIndex={0}
             aria-label="Fechar menu"
           >
-            <X className="h-5 w-5" />
-          </button>
+            <Image
+              src="/logo-white.png"
+              alt="Chronos.AI"
+              width={200}
+              height={55}
+              className="object-contain -mt-2"
+              priority
+            />
+          </div>
         </div>
 
         <nav className="flex-1 space-y-1 overflow-auto p-4">
