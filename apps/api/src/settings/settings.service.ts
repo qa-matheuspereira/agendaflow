@@ -363,47 +363,49 @@ export class SettingsService {
       return { code: null, error: `Falha ao criar instância: ${msg}` };
     }
 
-    // 3) GET /instance/connect para estabelecer socket (necessário antes do pairingCode)
+    // 3) GET /instance/connect?number={phone} — na v1.x é assim que se solicita pairing code
     await new Promise((r) => setTimeout(r, 1500));
     try {
-      await axios.get(`${this.evolutionUrl}/instance/connect/${name}`, { headers: h, timeout: 15000 });
-      this.logger.warn(`[PAIRING] Connect chamado para ${name}`);
-    } catch (e: unknown) {
-      const msg = axios.isAxiosError(e) ? `${e.response?.status}` : String(e);
-      this.logger.warn(`[PAIRING] connect retornou: ${msg} (continuando)`);
-    }
+      const res = await axios.get(`${this.evolutionUrl}/instance/connect/${name}`, {
+        headers: h,
+        params: { number: cleanPhone },
+        timeout: 15000,
+      });
+      this.logger.warn(`[PAIRING] connect?number response: ${JSON.stringify(res.data).slice(0, 400)}`);
 
-    // 4) Aguardar socket inicializar
-    await new Promise((r) => setTimeout(r, 3000));
+      // v1.x retorna o pairing code diretamente no connect response
+      const code: string =
+        res.data?.code ??
+        res.data?.pairingCode ??
+        res.data?.data?.code ??
+        res.data?.base64 ??   // não é QR, seria o código
+        null;
 
-    // 5) Solicitar pairing code — tenta variações de body para compatibilidade v1.x
-    const bodies = [
-      { phoneNumber: cleanPhone },
-      { number: cleanPhone },
-      { phone: cleanPhone },
-    ];
-
-    for (const body of bodies) {
-      try {
-        const res = await axios.post(
-          `${this.evolutionUrl}/instance/pairingCode/${name}`,
-          body,
-          { headers: h, timeout: 15000 },
-        );
-        this.logger.warn(`[PAIRING] Resposta: ${JSON.stringify(res.data)}`);
-        const code: string = res.data?.code ?? res.data?.pairingCode ?? res.data?.data?.code ?? null;
-        if (code) {
-          this.logger.warn(`[PAIRING] Código obtido: ${code}`);
-          return { code };
-        }
-      } catch (e: unknown) {
-        const msg = axios.isAxiosError(e)
-          ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 200)}`
-          : String(e);
-        this.logger.warn(`[PAIRING] body=${JSON.stringify(body)} falhou: ${msg}`);
+      if (code && !code.startsWith('data:image') && code.length < 20) {
+        // base64 de QR tem > 1000 chars; pairing code tem 8 chars
+        this.logger.warn(`[PAIRING] ✅ Código obtido via connect: ${code}`);
+        return { code };
       }
-    }
 
-    return { code: null, error: 'Pairing code não retornado pela Evolution API. Verifique os logs do servidor.' };
+      // Algumas versões retornam o código em campo separado
+      if (res.data && typeof res.data === 'object') {
+        for (const val of Object.values(res.data as Record<string, unknown>)) {
+          if (typeof val === 'string' && val.length >= 6 && val.length <= 12 && /^[A-Z0-9-]+$/.test(val)) {
+            this.logger.warn(`[PAIRING] ✅ Código encontrado: ${val}`);
+            return { code: val };
+          }
+        }
+      }
+
+      this.logger.warn(`[PAIRING] connect retornou mas sem código reconhecível: ${JSON.stringify(res.data).slice(0, 300)}`);
+      return { code: null, error: 'Pairing code não encontrado na resposta. Verifique logs da Evolution API.' };
+    } catch (e: unknown) {
+      const msg = axios.isAxiosError(e)
+        ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 300)}`
+        : String(e);
+      this.logger.error(`[PAIRING] connect?number falhou: ${msg}`);
+      return { code: null, error: `Falha ao solicitar pairing code: ${msg}` };
+    }
   }
+
 }
