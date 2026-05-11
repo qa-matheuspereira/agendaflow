@@ -2,6 +2,7 @@ import * as Joi from 'joi';
 
 export const validationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'staging', 'production', 'test').default('development'),
+  API_BASE_URL: Joi.string().optional().default(''),
   PORT: Joi.number().default(3001),
   API_PREFIX: Joi.string().default('api/v1'),
   FRONTEND_URL: Joi.string().uri().default('http://localhost:3000'),

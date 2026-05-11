@@ -13,6 +13,7 @@ export class SettingsService {
 
   private readonly evolutionUrl: string;
   private readonly evolutionKey: string;
+  private readonly apiBaseUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -21,8 +22,12 @@ export class SettingsService {
   ) {
     this.evolutionUrl = this.config.get<string>('evolution.apiUrl') ?? 'http://localhost:8080';
     this.evolutionKey = this.config.get<string>('evolution.apiKey') ?? '';
+    // API_BASE_URL or fall back to PORT-based localhost
+    const port = this.config.get<number>('port') ?? 3001;
+    const prefix = this.config.get<string>('apiPrefix') ?? 'api/v1';
+    this.apiBaseUrl = this.config.get<string>('apiBaseUrl') ?? `http://localhost:${port}/${prefix}`;
     this.logger.log(`Evolution API URL: ${this.evolutionUrl}`);
-    this.logger.log(`Evolution API Key: ${this.evolutionKey ? '***' + this.evolutionKey.slice(-4) : 'NOT SET'}`);
+    this.logger.log(`Webhook base URL: ${this.apiBaseUrl}`);
   }
 
   async getBusinessRules(companyId: string) {
@@ -186,9 +191,18 @@ export class SettingsService {
 
     // 3) Criar instância nova
     try {
+      const webhookUrl = `${this.apiBaseUrl}/whatsapp/webhook`;
+      this.logger.warn(`[QR] Webhook URL: ${webhookUrl}`);
       const res = await axios.post(
         `${this.evolutionUrl}/instance/create`,
-        { instanceName: name, token: this.evolutionKey, qrcode: true },
+        {
+          instanceName: name,
+          token: this.evolutionKey,
+          qrcode: true,
+          webhook: webhookUrl,
+          webhook_by_events: false,
+          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+        },
         { headers: h, timeout: 30000 },
       );
       this.logger.warn(`[QR] CREATE ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})} | dataLen: ${JSON.stringify(res.data).length}`);
