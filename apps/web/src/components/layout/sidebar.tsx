@@ -62,9 +62,9 @@ export function Sidebar() {
           <Image
             src="/logo-white.png"
             alt="Chronos.AI"
-            width={163}
-            height={45}
-            className="object-contain"
+            width={200}
+            height={55}
+            className="object-contain -mt-2"
             priority
           />
           {/* Close button visible only on mobile */}
