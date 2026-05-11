@@ -159,9 +159,9 @@ export default function SchedulePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Horários de Funcionamento</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Horários de Funcionamento</h1>
         <p className="text-sm text-muted-foreground">
           Gerencie horários semanais, dias especiais e pausas
         </p>

@@ -47,10 +47,10 @@ export default function DashboardPage() {
   const queueInService = queueState?.entries.filter((e) => e.status === 'IN_SERVICE').length ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Dashboard</h1>
         <p className="text-muted-foreground">
           {format(new Date(), "EEEE, d 'de' MMMM 'de' yyyy", { locale: ptBR })}
         </p>

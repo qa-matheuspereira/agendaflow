@@ -297,11 +297,11 @@ export default function QueuePage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Fila de Atendimento</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Fila de Atendimento</h1>
           <div className="flex items-center gap-2 mt-1">
             {isConnected ? (
               <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-600 border-emerald-500/20">

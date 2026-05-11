@@ -164,37 +164,37 @@ export default function AppointmentsPage() {
   const availableSlots = slots?.filter((s) => s.available) ?? [];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Agendamentos</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Agendamentos</h1>
           <p className="text-sm text-muted-foreground">
             {total} agendamento{total !== 1 ? 's' : ''} encontrado{total !== 1 ? 's' : ''}
           </p>
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={openCreate} size="sm" className="w-full sm:w-auto">
           <Plus className="mr-2 h-4 w-4" /> Novo Agendamento
         </Button>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
           <Input
             type="date"
             value={dateFilter}
             onChange={(e) => { setDateFilter(e.target.value); setPage(1); }}
-            className="w-auto"
+            className="w-36 text-sm"
           />
         </div>
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v === 'ALL' ? '' : v); setPage(1); }}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-40 text-sm">
             <Filter className="mr-2 h-4 w-4" />
-            <SelectValue placeholder="Todos os status" />
+            <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">Todos os status</SelectItem>
+            <SelectItem value="ALL">Todos</SelectItem>
             <SelectItem value="SCHEDULED">Agendado</SelectItem>
             <SelectItem value="CONFIRMED">Confirmado</SelectItem>
             <SelectItem value="IN_PROGRESS">Em atendimento</SelectItem>
@@ -205,13 +205,13 @@ export default function AppointmentsPage() {
         </Select>
         {(dateFilter || statusFilter) && (
           <Button variant="ghost" size="sm" onClick={() => { setDateFilter(''); setStatusFilter(''); }}>
-            Limpar filtros
+            Limpar
           </Button>
         )}
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

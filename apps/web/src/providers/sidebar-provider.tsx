@@ -15,7 +15,10 @@ const SidebarContext = createContext<SidebarContextValue>({
 });
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(true);
+  // Start closed on mobile, open on desktop
+  const [open, setOpen] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true,
+  );
   const toggle = useCallback(() => setOpen((v) => !v), []);
   const close = useCallback(() => setOpen(false), []);
   return (

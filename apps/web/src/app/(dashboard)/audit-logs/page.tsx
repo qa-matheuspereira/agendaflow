@@ -55,9 +55,9 @@ export default function AuditLogsPage() {
   const totalPages = Math.ceil(total / 30);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Logs de Auditoria</h1>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Logs de Auditoria</h1>
         <p className="text-sm text-muted-foreground">
           {total} registro{total !== 1 ? 's' : ''} encontrado{total !== 1 ? 's' : ''}
         </p>
@@ -91,7 +91,7 @@ export default function AuditLogsPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

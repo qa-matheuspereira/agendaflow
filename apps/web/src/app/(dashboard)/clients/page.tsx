@@ -133,10 +133,10 @@ export default function ClientsPage() {
   const isBusy = createMutation.isPending || updateMutation.isPending;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Clientes</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Clientes</h1>
           <p className="text-sm text-muted-foreground">
             {total} cliente{total !== 1 ? 's' : ''} cadastrado{total !== 1 ? 's' : ''}
           </p>
@@ -160,7 +160,7 @@ export default function ClientsPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>

@@ -132,10 +132,10 @@ export default function ServicesPage() {
   const requiresAdvancePaymentVal = form.watch('requiresAdvancePayment');
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Serviços</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Serviços</h1>
           <p className="text-sm text-muted-foreground">
             {total} serviço{total !== 1 ? 's' : ''} cadastrado{total !== 1 ? 's' : ''}
           </p>
@@ -146,7 +146,7 @@ export default function ServicesPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
