@@ -13,8 +13,8 @@ export default function LoginPage() {
           <Image
             src="/logo-black.png"
             alt="Chronos.AI"
-            width={220}
-            height={110}
+            width={300}
+            height={150}
             className="object-contain"
             priority
           />
