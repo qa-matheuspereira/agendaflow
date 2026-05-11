@@ -323,7 +323,6 @@ export class SettingsService {
 
     const h = this.evoHeaders();
     const name = config.instanceName;
-    // Normaliza: remove tudo que não é dígito
     const cleanPhone = phoneNumber.replace(/\D/g, '');
     this.logger.warn(`[PAIRING] Gerando código para ${name} | phone: ${cleanPhone}`);
 
@@ -364,26 +363,47 @@ export class SettingsService {
       return { code: null, error: `Falha ao criar instância: ${msg}` };
     }
 
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // 3) Solicitar pairing code
+    // 3) GET /instance/connect para estabelecer socket (necessário antes do pairingCode)
+    await new Promise((r) => setTimeout(r, 1500));
     try {
-      const res = await axios.post(
-        `${this.evolutionUrl}/instance/pairingCode/${name}`,
-        { phoneNumber: cleanPhone },
-        { headers: h, timeout: 15000 },
-      );
-      this.logger.warn(`[PAIRING] Código obtido: ${JSON.stringify(res.data)}`);
-      const code: string = res.data?.code ?? res.data?.pairingCode ?? null;
-      if (code) return { code };
-      return { code: null, error: 'Código não retornado pela Evolution API.' };
+      await axios.get(`${this.evolutionUrl}/instance/connect/${name}`, { headers: h, timeout: 15000 });
+      this.logger.warn(`[PAIRING] Connect chamado para ${name}`);
     } catch (e: unknown) {
-      const msg = axios.isAxiosError(e)
-        ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 300)}`
-        : String(e);
-      this.logger.error(`[PAIRING] Erro ao solicitar código: ${msg}`);
-      return { code: null, error: `Falha ao obter pairing code: ${msg}` };
+      const msg = axios.isAxiosError(e) ? `${e.response?.status}` : String(e);
+      this.logger.warn(`[PAIRING] connect retornou: ${msg} (continuando)`);
     }
+
+    // 4) Aguardar socket inicializar
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // 5) Solicitar pairing code — tenta variações de body para compatibilidade v1.x
+    const bodies = [
+      { phoneNumber: cleanPhone },
+      { number: cleanPhone },
+      { phone: cleanPhone },
+    ];
+
+    for (const body of bodies) {
+      try {
+        const res = await axios.post(
+          `${this.evolutionUrl}/instance/pairingCode/${name}`,
+          body,
+          { headers: h, timeout: 15000 },
+        );
+        this.logger.warn(`[PAIRING] Resposta: ${JSON.stringify(res.data)}`);
+        const code: string = res.data?.code ?? res.data?.pairingCode ?? res.data?.data?.code ?? null;
+        if (code) {
+          this.logger.warn(`[PAIRING] Código obtido: ${code}`);
+          return { code };
+        }
+      } catch (e: unknown) {
+        const msg = axios.isAxiosError(e)
+          ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 200)}`
+          : String(e);
+        this.logger.warn(`[PAIRING] body=${JSON.stringify(body)} falhou: ${msg}`);
+      }
+    }
+
+    return { code: null, error: 'Pairing code não retornado pela Evolution API. Verifique os logs do servidor.' };
   }
 }
-
