@@ -188,7 +188,7 @@ export class SettingsService {
     try {
       const res = await axios.post(
         `${this.evolutionUrl}/instance/create`,
-        { instanceName: name, integration: 'WHATSAPP-BAILEYS', token: this.evolutionKey, qrcode: true },
+        { instanceName: name, token: this.evolutionKey, qrcode: true },
         { headers: h, timeout: 30000 },
       );
       this.logger.warn(`[QR] CREATE ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})} | dataLen: ${JSON.stringify(res.data).length}`);
