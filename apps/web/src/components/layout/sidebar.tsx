@@ -58,7 +58,7 @@ export function Sidebar() {
         )}
       >
         {/* Logo branca + close button */}
-        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
+        <div className="relative flex h-16 items-center justify-center border-b border-sidebar-border px-4">
           <Image
             src="/logo-white.png"
             alt="Chronos.AI"
@@ -70,7 +70,7 @@ export function Sidebar() {
           {/* Close button visible only on mobile */}
           <button
             onClick={close}
-            className="rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+            className="absolute right-4 rounded-md p-1.5 text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
             aria-label="Fechar menu"
           >
             <X className="h-5 w-5" />
