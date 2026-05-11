@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
@@ -56,9 +57,16 @@ export function Sidebar() {
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        {/* Logo + close button */}
-        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-6">
-          <span className="text-lg font-bold text-sidebar-foreground">AgendaFlow</span>
+        {/* Logo branca + close button */}
+        <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
+          <Image
+            src="/logo-white.png"
+            alt="Chronos.AI"
+            width={130}
+            height={36}
+            className="object-contain"
+            priority
+          />
           {/* Close button visible only on mobile */}
           <button
             onClick={close}
