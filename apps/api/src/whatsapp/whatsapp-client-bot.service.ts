@@ -67,6 +67,7 @@ const BOOKING_STEPS = [
   'SELECT_SLOT',
   'SELECT_QUEUE_SERVICE',
   'LIST_CANCELABLE',
+  'NO_COLLABORATOR_QUEUE_OFFER',
 ];
 
 const DAY_NAMES_PT = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
@@ -287,6 +288,15 @@ export class WhatsappClientBotService {
       case 'LIST_CANCELABLE':
         await this.handleCancellationSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId);
         break;
+      case 'NO_COLLABORATOR_QUEUE_OFFER': {
+        const opt = messageText.trim();
+        if (opt === '1') {
+          await this.startQueueFlow(instanceName, rawNumber, companyId);
+        } else {
+          await this.showMainMenu(instanceName, rawNumber, companyId);
+        }
+        break;
+      }
       default:
         await this.startBookingFlow(instanceName, rawNumber, companyId);
     }
@@ -310,12 +320,22 @@ export class WhatsappClientBotService {
     });
 
     if (collaborators.length === 0) {
-      await this.whatsapp.sendText(
-        instanceName,
-        rawNumber,
-        'Nenhum profissional disponível no momento.',
-      );
-      await this.setState(companyId, rawNumber, 'MAIN_MENU');
+      const withQueue = await this.queueEnabled(companyId);
+      if (withQueue) {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          'Nenhum profissional disponível para agendamento no momento.\n\nMas você pode entrar na fila de espera e ser chamado quando houver disponibilidade!\n\n1 - Entrar na fila\n0 - Voltar ao menu',
+        );
+        await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
+      } else {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          'Nenhum profissional disponível no momento. Entre em contato com o estabelecimento.',
+        );
+        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+      }
       return;
     }
 
@@ -454,12 +474,22 @@ export class WhatsappClientBotService {
     const rangeLabel = `${fmtDate(now)} a ${fmtDate(endDate)}`;
 
     if (dates.length === 0) {
-      await this.whatsapp.sendText(
-        instanceName,
-        rawNumber,
-        `Nenhuma data disponível nos próximos 7 dias (${rangeLabel}). Entre em contato com o estabelecimento.`,
-      );
-      await this.setState(companyId, rawNumber, 'MAIN_MENU');
+      const withQueue = await this.queueEnabled(companyId);
+      if (withQueue) {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          `Nenhuma data disponível nos próximos 7 dias (${rangeLabel}).\n\nMas você pode entrar na fila de espera e ser chamado quando houver disponibilidade!\n\n1 - Entrar na fila\n0 - Voltar ao menu`,
+        );
+        await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
+      } else {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          `Nenhuma data disponível nos próximos 7 dias (${rangeLabel}). Entre em contato com o estabelecimento.`,
+        );
+        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+      }
       return;
     }
 
