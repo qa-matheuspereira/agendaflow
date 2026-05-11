@@ -191,18 +191,25 @@ export class SettingsService {
 
     // 3) Criar instância nova
     try {
-      const webhookUrl = `${this.apiBaseUrl}/whatsapp/webhook`;
-      this.logger.warn(`[QR] Webhook URL: ${webhookUrl}`);
+      const webhookUrl = this.apiBaseUrl?.startsWith('http')
+        ? `${this.apiBaseUrl}/whatsapp/webhook`
+        : null;
+      this.logger.warn(`[QR] Webhook URL: ${webhookUrl ?? 'NÃO CONFIGURADO (API_BASE_URL ausente)'}`);
+
+      const createPayload: Record<string, unknown> = {
+        instanceName: name,
+        token: this.evolutionKey,
+        qrcode: true,
+      };
+      if (webhookUrl) {
+        createPayload.webhook = webhookUrl;
+        createPayload.webhook_by_events = false;
+        createPayload.events = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+      }
+
       const res = await axios.post(
         `${this.evolutionUrl}/instance/create`,
-        {
-          instanceName: name,
-          token: this.evolutionKey,
-          qrcode: true,
-          webhook: webhookUrl,
-          webhook_by_events: false,
-          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
-        },
+        createPayload,
         { headers: h, timeout: 30000 },
       );
       this.logger.warn(`[QR] CREATE ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})} | dataLen: ${JSON.stringify(res.data).length}`);
