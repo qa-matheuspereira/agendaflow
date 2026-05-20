@@ -100,6 +100,8 @@ export class SettingsService {
         autoConfirmHours: true,
         dailyReminderEnabled: true,
         dailyReminderTime: true,
+        skipCollaboratorSelection: true,
+        allowMultipleServices: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -125,6 +127,8 @@ export class SettingsService {
         ...(dto.autoConfirmHours !== undefined ? { autoConfirmHours: dto.autoConfirmHours } : {}),
         ...(dto.dailyReminderEnabled !== undefined ? { dailyReminderEnabled: dto.dailyReminderEnabled } : {}),
         ...(dto.dailyReminderTime !== undefined ? { dailyReminderTime: dto.dailyReminderTime } : {}),
+        ...(dto.skipCollaboratorSelection !== undefined ? { skipCollaboratorSelection: dto.skipCollaboratorSelection } : {}),
+        ...(dto.allowMultipleServices !== undefined ? { allowMultipleServices: dto.allowMultipleServices } : {}),
       },
     });
 
