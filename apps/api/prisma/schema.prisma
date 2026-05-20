@@ -541,6 +541,8 @@ model WhatsappConfig {
   dailyReminderTime      String  @default("07:00")
   autoConfirmEnabled     Boolean @default(false)
   autoConfirmHours    Int     @default(2)
+  skipCollaboratorSelection Boolean @default(false)
+  allowMultipleServices     Boolean @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

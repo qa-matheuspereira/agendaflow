@@ -198,8 +198,15 @@ export class WhatsappClientBotService {
       return;
     }
 
+    // Evita duplicidade: só exibe menu/saudação se o estado estiver IDLE ou expirado.
+    // Se já está em MAIN_MENU o handleMenuReply será chamado pelo inbound.
     const menu = await this.buildMenu(companyId);
-    await this.whatsapp.sendText(instanceName, rawNumber, menu);
+    const greeting = config.greetingMessage?.trim() || DEFAULT_GREETING;
+    await this.whatsapp.sendText(
+      instanceName,
+      rawNumber,
+      `${greeting}\n\nOlá, *${client.name}*! 👋\n\n${menu}`,
+    );
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }
 
@@ -313,6 +320,13 @@ export class WhatsappClientBotService {
     rawNumber: string,
     companyId: string,
   ): Promise<void> {
+    const cfg = await this.prisma.whatsappConfig.findUnique({
+      where: { companyId },
+      select: { skipCollaboratorSelection: true, allowMultipleServices: true },
+    });
+    const skipCollab = cfg?.skipCollaboratorSelection ?? false;
+    const multiService = cfg?.allowMultipleServices ?? false;
+
     const collaborators = await this.prisma.collaborator.findMany({
       where: { companyId, isActive: true },
       select: { id: true, name: true },
@@ -320,25 +334,57 @@ export class WhatsappClientBotService {
     });
 
     if (collaborators.length === 0) {
+      // Sem colaboradores: vai direto para serviços OU oferece fila
       const withQueue = await this.queueEnabled(companyId);
-      if (withQueue) {
-        await this.whatsapp.sendText(
-          instanceName,
-          rawNumber,
-          'Nenhum profissional disponível para agendamento no momento.\n\nMas você pode entrar na fila de espera e ser chamado quando houver disponibilidade!\n\n1 - Entrar na fila\n0 - Voltar ao menu',
-        );
-        await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
-      } else {
-        await this.whatsapp.sendText(
-          instanceName,
-          rawNumber,
-          'Nenhum profissional disponível no momento. Entre em contato com o estabelecimento.',
-        );
-        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+      const services = await this.prisma.service.findMany({
+        where: { companyId, isActive: true },
+        select: { id: true, name: true, durationMinutes: true, price: true },
+        orderBy: { name: 'asc' },
+      });
+
+      if (services.length === 0) {
+        if (withQueue) {
+          await this.whatsapp.sendText(
+            instanceName,
+            rawNumber,
+            'Nenhum profissional disponível para agendamento no momento.\n\nMas você pode entrar na fila de espera e ser chamado quando houver disponibilidade!\n\n1 - Entrar na fila\n0 - Voltar ao menu',
+          );
+          await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
+        } else {
+          await this.whatsapp.sendText(
+            instanceName,
+            rawNumber,
+            'Nenhum profissional disponível no momento. Entre em contato com o estabelecimento.',
+          );
+          await this.setState(companyId, rawNumber, 'MAIN_MENU');
+        }
+        return;
       }
+
+      // Tem serviços, sem colaborador — pula direto pra seleção de serviço
+      await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, null);
       return;
     }
 
+    // Tem colaboradores mas skipCollaboratorSelection ativo — pula seleção de profissional
+    if (skipCollab) {
+      const services = await this.prisma.service.findMany({
+        where: { companyId, isActive: true },
+        select: { id: true, name: true, durationMinutes: true, price: true },
+        orderBy: { name: 'asc' },
+      });
+
+      if (services.length === 0) {
+        await this.whatsapp.sendText(instanceName, rawNumber, 'Nenhum serviço disponível no momento.');
+        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+        return;
+      }
+
+      await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, null);
+      return;
+    }
+
+    // Fluxo normal: escolher profissional
     const lines = ['*Escolha o profissional:*', ''];
     collaborators.forEach((c, i) => lines.push(`${i + 1} - ${c.name}`));
     lines.push('', '0 - Voltar ao menu');
@@ -347,6 +393,39 @@ export class WhatsappClientBotService {
 
     await this.setState(companyId, rawNumber, 'SELECT_COLLABORATOR', {
       collaborators: collaborators.map((c) => c.id),
+    } as BookingContext);
+  }
+
+  /** Helper: exibe menu de serviços (com suporte a multi-seleção) */
+  private async showServiceMenu(
+    instanceName: string,
+    rawNumber: string,
+    services: { id: string; name: string; durationMinutes: number; price: unknown }[],
+    multiService: boolean,
+    companyId: string,
+    selectedCollaboratorId: string | null,
+  ): Promise<void> {
+    const lines: string[] = [];
+
+    if (multiService) {
+      lines.push('*Escolha os serviços desejados:*', '');
+      lines.push('Você pode selecionar mais de um serviço! Digite os números separados por vírgula.');
+      lines.push('Exemplo: _1,3_ para selecionar o 1º e o 3º serviço.', '');
+    } else {
+      lines.push('*Escolha o serviço:*', '');
+    }
+
+    services.forEach((s, i) => {
+      const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
+    });
+    lines.push('', '0 - Voltar ao menu');
+    if (!multiService) lines.push('', 'Digite o número do serviço desejado.');
+
+    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    await this.setState(companyId, rawNumber, 'SELECT_SERVICE', {
+      selectedCollaboratorId,
+      services: services.map((s) => s.id),
     } as BookingContext);
   }
 
@@ -394,20 +473,20 @@ export class WhatsappClientBotService {
       return;
     }
 
-    const lines = ['*Escolha o serviço:*', ''];
-    services.forEach((s, i) => {
-      const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
+    const cfg = await this.prisma.whatsappConfig.findUnique({
+      where: { companyId },
+      select: { allowMultipleServices: true },
     });
-    lines.push('', '0 - Voltar ao profissional');
-    lines.push('', 'Digite o número do serviço desejado.');
-    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    const multiService = cfg?.allowMultipleServices ?? false;
 
-    await this.setState(companyId, rawNumber, 'SELECT_SERVICE', {
-      collaborators,
-      selectedCollaboratorId,
-      services: services.map((s) => s.id),
-    } as BookingContext);
+    await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, selectedCollaboratorId);
+
+    // update context to include collaborators list for back-navigation
+    const stateKey = rawNumber.split('@')[0];
+    await this.prisma.conversationState.update({
+      where: { companyId_whatsappNumber: { companyId, whatsappNumber: stateKey } },
+      data: { context: { collaborators, selectedCollaboratorId, services: services.map((s) => s.id) } },
+    });
   }
 
   private async handleServiceSelection(
@@ -425,21 +504,63 @@ export class WhatsappClientBotService {
       return;
     }
 
+    const cfg = await this.prisma.whatsappConfig.findUnique({
+      where: { companyId },
+      select: { allowMultipleServices: true },
+    });
+    const multiService = cfg?.allowMultipleServices ?? false;
+
+    // Multi-service: parse "1,3" or "1, 3" → índices
+    if (multiService && trimmed.includes(',')) {
+      const parts = trimmed.split(',').map((p) => parseInt(p.trim(), 10) - 1);
+      const validIdxs = parts.filter((i) => !isNaN(i) && i >= 0 && i < services.length);
+
+      if (validIdxs.length === 0) {
+        await this.whatsapp.sendText(instanceName, rawNumber, 'Opção inválida. Tente novamente enviando os números separados por vírgula (ex: 1,3).');
+        return;
+      }
+
+      const selectedServiceIds = validIdxs.map((i) => services[i]);
+      // Para agendamento usa o primeiro serviço; os demais ficam salvos no contexto
+      const selectedServiceId = selectedServiceIds[0];
+
+      const svcNames = await this.prisma.service.findMany({
+        where: { id: { in: selectedServiceIds } },
+        select: { name: true },
+      });
+      const nameList = svcNames.map((s) => `• ${s.name}`).join('\n');
+      await this.whatsapp.sendText(
+        instanceName,
+        rawNumber,
+        `✅ Serviços selecionados:\n${nameList}\n\nBuscando datas disponíveis...`,
+      );
+
+      await this.showAvailableDates(instanceName, rawNumber, companyId, {
+        ...ctx,
+        selectedServiceId,
+        appointmentIds: selectedServiceIds, // reutilizamos appointmentIds para armazenar IDs dos serviços extras
+      } as BookingContext);
+      return;
+    }
+
+    // Single service selection
     const idx = parseInt(trimmed, 10) - 1;
 
     if (isNaN(idx) || idx < 0 || idx >= services.length) {
-      const lines = ['*Escolha o serviço:*', ''];
       const svcRecords = await this.prisma.service.findMany({
         where: { companyId, id: { in: services }, isActive: true },
         select: { id: true, name: true, durationMinutes: true, price: true },
         orderBy: { name: 'asc' },
       });
+      const lines = multiService
+        ? ['*Escolha os serviços desejados:*', '', 'Digite os números separados por vírgula (ex: 1,3):', '']
+        : ['*Escolha o serviço:*', ''];
       svcRecords.forEach((s, i) => {
         const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
       });
-      lines.push('', '0 - Voltar ao profissional');
-      lines.push('', 'Opção inválida. Digite o número do serviço desejado.');
+      lines.push('', '0 - Voltar ao menu');
+      lines.push('', 'Opção inválida. Tente novamente.');
       await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
       return;
     }
