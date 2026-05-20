@@ -86,6 +86,11 @@ export class WhatsappInboundService {
     const messageText = extractText(data);
     if (!messageText) return;
 
+    // ── Deduplicação por messageId ────────────────────────────────────────────
+    // A Evolution API pode reenviar o webhook se o servidor demorar muito a responder.
+    // Guardamos o último messageId processado no contexto da conversa e ignoramos duplicatas.
+    const messageId = data.key.id;
+
     const config = await this.prisma.whatsappConfig.findUnique({ where: { instanceName } });
     if (!config) {
       this.logger.warn(`Webhook recebido para instância não registrada: ${instanceName}`);
@@ -103,11 +108,6 @@ export class WhatsappInboundService {
       if (resolved) lookupNumber = resolved;
     }
 
-    // sendNumber: número usado para ENVIAR mensagens
-    // rawNumber já tem o formato correto:
-    //   @lid contacts → "15930184695888@lid" (o patch da Evolution bypassa validação pra @lid)
-    //   @s.whatsapp.net → "5511999999999" (dígitos, Evolution cria @s.whatsapp.net)
-    // lookupNumber é apenas para DB lookup e conversationState
     const sendNumber = rawNumber;
 
     this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber}`);
@@ -168,6 +168,15 @@ export class WhatsappInboundService {
 
     const isExpired = !existing || existing.expiresAt < now;
 
+    // ── Deduplicação: ignora se este messageId já foi processado ─────────────
+    if (messageId && existing) {
+      const ctx = (existing.context ?? {}) as Record<string, unknown>;
+      if (ctx['lastMessageId'] === messageId) {
+        this.logger.warn(`[DEDUP] Mensagem duplicada ignorada: ${messageId}`);
+        return;
+      }
+    }
+
     const state = await this.prisma.conversationState.upsert({
       where: {
         companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber },
@@ -176,12 +185,14 @@ export class WhatsappInboundService {
         companyId: config.companyId,
         whatsappNumber: lookupNumber,
         currentStep: 'IDLE',
-        context: {},
+        context: { lastMessageId: messageId },
         expiresAt: conversationExpiresAt(),
       },
       update: {
         currentStep: isExpired ? 'IDLE' : undefined,
-        context: isExpired ? {} : undefined,
+        context: isExpired
+          ? { lastMessageId: messageId }
+          : { ...(existing?.context as object ?? {}), lastMessageId: messageId },
         expiresAt: conversationExpiresAt(),
       },
     });
@@ -207,7 +218,7 @@ export class WhatsappInboundService {
         await this.whatsapp.sendText(instanceName, sendNumber, 'Para continuar, qual é o seu nome?');
         await this.prisma.conversationState.update({
           where: { companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber } },
-          data: { currentStep: 'COLLECT_NAME', context: {}, expiresAt: conversationExpiresAt() },
+          data: { currentStep: 'COLLECT_NAME', context: { lastMessageId: messageId }, expiresAt: conversationExpiresAt() },
         });
         return;
       }
@@ -253,18 +264,15 @@ export class WhatsappInboundService {
     }
 
     // Sem cliente encontrado — resetar estado se estava em step que pressupõe cliente existente
-    // (ex: cliente foi apagado do banco mas conversationState ainda existe com MAIN_MENU)
     const isClientStep = step === 'MAIN_MENU' || WhatsappClientBotService.isBookingStep(step);
     if (isClientStep || isExpired) {
-      // Reset state e vai para saudação
       await this.prisma.conversationState.update({
         where: { companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber } },
-        data: { currentStep: 'IDLE', context: {}, expiresAt: conversationExpiresAt() },
+        data: { currentStep: 'IDLE', context: { lastMessageId: messageId }, expiresAt: conversationExpiresAt() },
       });
       this.logger.log(`Estado resetado para IDLE (cliente não encontrado) ${sendNumber}`);
-      // 5s delay apenas na saudação
-      await new Promise((r) => setTimeout(r, 5000));
-      await this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
+      // Não bloqueia o handler — envia a saudação sem await no delay
+      void this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
       return;
     }
 
@@ -273,11 +281,11 @@ export class WhatsappInboundService {
     if (step === 'COLLECT_NAME' && !isExpired) {
       await this.clientBot.handleNameCollection(instanceName, sendNumber, messageText, config, config.companyId);
     } else {
-      // 5s delay apenas na saudação (primeiro contato)
-      await new Promise((r) => setTimeout(r, 5000));
-      await this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
+      // Não bloqueia o handler — saudação enviada sem delay bloqueante
+      void this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
     }
   }
+
 
   async processDeliveryUpdate(instanceName: string, data: EvolutionAckData): Promise<void> {
     const msgId = data.key?.id;
