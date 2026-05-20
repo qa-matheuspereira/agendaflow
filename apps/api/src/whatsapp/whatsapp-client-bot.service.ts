@@ -731,16 +731,35 @@ export class WhatsappClientBotService {
 
     const selectedTime = slots[idx];
 
+    // Resolve clientId
     let resolvedClientId = clientId;
     if (!resolvedClientId) {
       const newClient = await this.prisma.client.upsert({
-        where: {
-          companyId_whatsappNumber: { companyId, whatsappNumber: rawNumber },
-        },
+        where: { companyId_whatsappNumber: { companyId, whatsappNumber: rawNumber } },
         create: { companyId, whatsappNumber: rawNumber, name: 'Cliente WhatsApp' },
         update: {},
       });
       resolvedClientId = newClient.id;
+    }
+
+    // Resolve collaboratorId — pode ser null quando skipCollaboratorSelection está ativo
+    let resolvedCollaboratorId = ctx.selectedCollaboratorId ?? null;
+    if (!resolvedCollaboratorId) {
+      const fallback = await this.prisma.collaborator.findFirst({
+        where: { companyId, isActive: true },
+        select: { id: true },
+        orderBy: { name: 'asc' },
+      });
+      if (!fallback) {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          'Nenhum profissional disponível para realizar o agendamento. Entre em contato com o estabelecimento.',
+        );
+        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+        return;
+      }
+      resolvedCollaboratorId = fallback.id;
     }
 
     const [service, collaborator] = await Promise.all([
@@ -749,7 +768,7 @@ export class WhatsappClientBotService {
         select: { name: true, durationMinutes: true },
       }),
       this.prisma.collaborator.findUnique({
-        where: { id: ctx.selectedCollaboratorId! },
+        where: { id: resolvedCollaboratorId },
         select: { name: true },
       }),
     ]);
@@ -763,7 +782,7 @@ export class WhatsappClientBotService {
         const conflict = await tx.appointment.findFirst({
           where: {
             companyId,
-            collaboratorId: ctx.selectedCollaboratorId,
+            collaboratorId: resolvedCollaboratorId!,
             scheduledDate: new Date(ctx.selectedDate!),
             scheduledTime: selectedTime,
             status: { notIn: [AppointmentStatus.CANCELLED] },
@@ -773,8 +792,8 @@ export class WhatsappClientBotService {
         await tx.appointment.create({
           data: {
             companyId,
-            clientId: resolvedClientId,
-            collaboratorId: ctx.selectedCollaboratorId!,
+            clientId: resolvedClientId!,
+            collaboratorId: resolvedCollaboratorId!,
             serviceId: ctx.selectedServiceId!,
             scheduledDate: new Date(ctx.selectedDate! + 'T00:00:00.000Z'),
             scheduledTime: selectedTime,
@@ -801,7 +820,7 @@ export class WhatsappClientBotService {
       `📅 Data: ${dateFormatted}`,
       `🕐 Horário: ${selectedTime}`,
       `💈 Serviço: ${service?.name ?? ''}`,
-      `👤 Profissional: ${collaborator?.name ?? ''}`,
+      `👤 Profissional: ${collaborator?.name ?? 'A definir'}`,
       '',
       'Envie qualquer mensagem para acessar o menu.',
     ].join('\n');
