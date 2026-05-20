@@ -198,7 +198,7 @@ export class SettingsService {
 
       const createPayload: Record<string, unknown> = {
         instanceName: name,
-        token: this.evolutionKey,
+        // token omitido — Evolution API gera automaticamente (evita conflito "token já existe")
         qrcode: true,
       };
       if (webhookUrl) {
@@ -341,7 +341,7 @@ export class SettingsService {
 
       const createPayload: Record<string, unknown> = {
         instanceName: name,
-        token: this.evolutionKey,
+        // token omitido — Evolution API gera automaticamente (evita conflito "token já existe")
         qrcode: false,
       };
       if (webhookUrl) {
