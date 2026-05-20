@@ -31,17 +31,19 @@ export class SettingsService {
   }
 
   async getBusinessRules(companyId: string) {
-    const [rules, company] = await Promise.all([
-      this.prisma.businessRules.findUnique({ where: { companyId } }),
-      this.prisma.company.findUnique({ where: { id: companyId }, select: { schedulingMode: true } }),
-    ]);
-    if (!rules) throw new NotFoundException('Regras de negócio não encontradas');
+    let rules = await this.prisma.businessRules.findUnique({ where: { companyId } });
+    if (!rules) {
+      rules = await this.prisma.businessRules.create({ data: { companyId } });
+    }
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { schedulingMode: true } });
     return { ...rules, schedulingMode: company?.schedulingMode ?? 'HYBRID' };
   }
 
   async updateBusinessRules(companyId: string, dto: UpdateBusinessRulesDto, userId: string) {
-    const existing = await this.prisma.businessRules.findUnique({ where: { companyId } });
-    if (!existing) throw new NotFoundException('Regras de negócio não encontradas');
+    let existing = await this.prisma.businessRules.findUnique({ where: { companyId } });
+    if (!existing) {
+      existing = await this.prisma.businessRules.create({ data: { companyId } });
+    }
 
     const [updated] = await Promise.all([
       this.prisma.businessRules.update({

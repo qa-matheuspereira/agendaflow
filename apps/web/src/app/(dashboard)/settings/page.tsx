@@ -173,8 +173,8 @@ export default function SettingsPage() {
       setWaAutoConfirmHours(waConfig.autoConfirmHours ?? 2);
       setWaDailyReminderEnabled(waConfig.dailyReminderEnabled ?? false);
       setWaDailyReminderTime(waConfig.dailyReminderTime ?? '07:00');
-      setWaSkipCollaborator((waConfig as Record<string, unknown>).skipCollaboratorSelection as boolean ?? false);
-      setWaAllowMultipleServices((waConfig as Record<string, unknown>).allowMultipleServices as boolean ?? false);
+      setWaSkipCollaborator(waConfig.skipCollaboratorSelection ?? false);
+      setWaAllowMultipleServices(waConfig.allowMultipleServices ?? false);
     }
   }, [waConfig]);
 
