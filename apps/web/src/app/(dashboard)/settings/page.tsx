@@ -156,6 +156,8 @@ export default function SettingsPage() {
   const [waAutoConfirmHours, setWaAutoConfirmHours] = useState(2);
   const [waDailyReminderEnabled, setWaDailyReminderEnabled] = useState(false);
   const [waDailyReminderTime, setWaDailyReminderTime] = useState('07:00');
+  const [waSkipCollaborator, setWaSkipCollaborator] = useState(false);
+  const [waAllowMultipleServices, setWaAllowMultipleServices] = useState(false);
 
   useEffect(() => {
     if (waConfig) {
@@ -171,6 +173,8 @@ export default function SettingsPage() {
       setWaAutoConfirmHours(waConfig.autoConfirmHours ?? 2);
       setWaDailyReminderEnabled(waConfig.dailyReminderEnabled ?? false);
       setWaDailyReminderTime(waConfig.dailyReminderTime ?? '07:00');
+      setWaSkipCollaborator((waConfig as Record<string, unknown>).skipCollaboratorSelection as boolean ?? false);
+      setWaAllowMultipleServices((waConfig as Record<string, unknown>).allowMultipleServices as boolean ?? false);
     }
   }, [waConfig]);
 
@@ -201,6 +205,8 @@ export default function SettingsPage() {
         autoConfirmHours: waAutoConfirmHours,
         dailyReminderEnabled: waDailyReminderEnabled,
         dailyReminderTime: waDailyReminderTime,
+        skipCollaboratorSelection: waSkipCollaborator,
+        allowMultipleServices: waAllowMultipleServices,
       });
       toast.success('Configurações WhatsApp atualizadas!');
     } catch {
@@ -634,6 +640,38 @@ export default function SettingsPage() {
                         <span className="text-xs text-muted-foreground">Lembra todos os clientes do dia neste horário</span>
                       </div>
                     )}
+                  </div>
+                  <Separator />
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="skipCollaboratorSelection"
+                        checked={waSkipCollaborator}
+                        onChange={(e) => setWaSkipCollaborator(e.target.checked)}
+                        className="rounded"
+                      />
+                      <div>
+                        <Label htmlFor="skipCollaboratorSelection">Pular seleção de profissional</Label>
+                        <p className="text-xs text-muted-foreground">O bot vai direto para a escolha do serviço, sem pedir o profissional</p>
+                      </div>
+                    </div>
+                  </div>
+                  <Separator />
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="allowMultipleServices"
+                        checked={waAllowMultipleServices}
+                        onChange={(e) => setWaAllowMultipleServices(e.target.checked)}
+                        className="rounded"
+                      />
+                      <div>
+                        <Label htmlFor="allowMultipleServices">Permitir múltiplos serviços por agendamento</Label>
+                        <p className="text-xs text-muted-foreground">O cliente pode digitar ex: "1,3" para agendar dois serviços de uma vez</p>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
