@@ -100,11 +100,13 @@ export class NotificationSchedulerService {
       });
 
       for (const appt of appointments) {
+        const dateFormatted = appt.scheduledDate.toISOString().split('T')[0].split('-').reverse().join('/');
         const message =
-          config.reminderMessage?.replace('{nome}', appt.client.name)
-            .replace('{servico}', appt.service.name)
-            .replace('{horario}', appt.scheduledTime)
-            .replace('{profissional}', appt.collaborator.name) ??
+          config.reminderMessage?.replace(/{nome}/g, appt.client.name)
+            .replace(/{servico}/g, appt.service.name)
+            .replace(/{horario}/g, appt.scheduledTime)
+            .replace(/{profissional}/g, appt.collaborator.name)
+            .replace(/{data}/g, dateFormatted) ??
           `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
 
         await this.notifications.enqueueWhatsapp({
@@ -224,10 +226,16 @@ export class NotificationSchedulerService {
             const diff = now.getTime() - sendAt.getTime();
             if (diff < 0 || diff >= windowMs) continue;
 
-            const message =
-              rule.message ??
-              config.reminderMessage ??
-              this.buildDefaultMessage(appt, dateStr, rule.minutesBefore);
+            const dateFormatted = dateStr.split('-').reverse().join('/');
+            const rawMsg = rule.message ?? config.reminderMessage;
+            const message = rawMsg 
+              ? rawMsg
+                  .replace(/{nome}/g, appt.client.name)
+                  .replace(/{servico}/g, appt.service.name)
+                  .replace(/{horario}/g, appt.scheduledTime)
+                  .replace(/{profissional}/g, appt.collaborator.name)
+                  .replace(/{data}/g, dateFormatted)
+              : this.buildDefaultMessage(appt, dateStr, rule.minutesBefore);
 
             await this.notifications.enqueueWhatsapp({
               companyId: config.companyId,

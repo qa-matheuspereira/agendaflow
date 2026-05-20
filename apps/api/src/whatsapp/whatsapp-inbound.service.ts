@@ -239,6 +239,7 @@ export class WhatsappInboundService {
           client.id,
           state,
           config.companyId,
+          config,
         );
       } else if (step === 'MAIN_MENU' && !isExpired) {
         await this.clientBot.handleMenuReply(

@@ -265,7 +265,6 @@ export class WhatsappClientBotService {
     }
   }
 
-  /** Handles SELECT_COLLABORATOR / SELECT_SERVICE / SELECT_DATE / SELECT_SLOT steps. */
   async handleBookingStep(
     instanceName: string,
     rawNumber: string,
@@ -273,6 +272,7 @@ export class WhatsappClientBotService {
     clientId: string | null,
     state: ConversationState,
     companyId: string,
+    config?: WhatsappConfig,
   ): Promise<void> {
     const ctx = (state.context ?? {}) as BookingContext;
 
@@ -287,13 +287,13 @@ export class WhatsappClientBotService {
         await this.handleDateInput(instanceName, rawNumber, messageText, ctx, companyId);
         break;
       case 'SELECT_SLOT':
-        await this.handleSlotSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId);
+        await this.handleSlotSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId, config);
         break;
       case 'SELECT_QUEUE_SERVICE':
         await this.handleQueueServiceSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId);
         break;
       case 'LIST_CANCELABLE':
-        await this.handleCancellationSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId);
+        await this.handleCancellationSelection(instanceName, rawNumber, messageText, ctx, companyId, clientId, config);
         break;
       case 'NO_COLLABORATOR_QUEUE_OFFER': {
         const opt = messageText.trim();
@@ -709,6 +709,7 @@ export class WhatsappClientBotService {
     ctx: BookingContext,
     companyId: string,
     clientId: string | null,
+    config?: WhatsappConfig,
   ): Promise<void> {
     const slots = ctx.slots ?? [];
     const trimmed = text.trim();
@@ -814,16 +815,31 @@ export class WhatsappClientBotService {
     }
 
     const dateFormatted = ctx.selectedDate!.split('-').reverse().join('/');
-    const confirmation = [
-      '✅ *Agendamento confirmado!*',
-      '',
-      `📅 Data: ${dateFormatted}`,
-      `🕐 Horário: ${selectedTime}`,
-      `💈 Serviço: ${service?.name ?? ''}`,
-      `👤 Profissional: ${collaborator?.name ?? 'A definir'}`,
-      '',
-      'Envie qualquer mensagem para acessar o menu.',
-    ].join('\n');
+    const clientRecord = resolvedClientId ? await this.prisma.client.findUnique({ where: { id: resolvedClientId }, select: { name: true } }) : null;
+    const clientName = clientRecord?.name || 'Cliente';
+    const serviceName = service?.name ?? '';
+    const collabName = collaborator?.name ?? 'A definir';
+
+    let confirmation = '';
+    if (config?.scheduleConfirmMsg) {
+      confirmation = config.scheduleConfirmMsg
+        .replace(/{nome}/g, clientName)
+        .replace(/{servico}/g, serviceName)
+        .replace(/{horario}/g, selectedTime)
+        .replace(/{profissional}/g, collabName)
+        .replace(/{data}/g, dateFormatted);
+    } else {
+      confirmation = [
+        '✅ *Agendamento confirmado!*',
+        '',
+        `📅 Data: ${dateFormatted}`,
+        `🕐 Horário: ${selectedTime}`,
+        `💈 Serviço: ${serviceName}`,
+        `👤 Profissional: ${collabName}`,
+        '',
+        'Envie qualquer mensagem para acessar o menu.',
+      ].join('\n');
+    }
 
     await this.whatsapp.sendText(instanceName, rawNumber, confirmation);
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
@@ -1058,6 +1074,7 @@ export class WhatsappClientBotService {
     ctx: BookingContext,
     companyId: string,
     clientId: string | null,
+    config?: WhatsappConfig,
   ): Promise<void> {
     if (!clientId) {
       await this.whatsapp.sendText(instanceName, rawNumber, 'Você não possui agendamentos para cancelar.');
@@ -1154,16 +1171,24 @@ export class WhatsappClientBotService {
       .reverse()
       .join('/');
 
-    await this.whatsapp.sendText(
-      instanceName,
-      rawNumber,
-      [
+    let cancellationStr = '';
+    if (config?.cancellationMessage) {
+      cancellationStr = config.cancellationMessage
+        .replace(/{nome}/g, appt.client.name)
+        .replace(/{servico}/g, appt.service.name)
+        .replace(/{horario}/g, appt.scheduledTime)
+        .replace(/{profissional}/g, appt.collaborator.name)
+        .replace(/{data}/g, dateFormatted);
+    } else {
+      cancellationStr = [
         '✅ *Agendamento cancelado!*',
         '',
         `📅 ${dateFormatted} às ${appt.scheduledTime}`,
         `💈 ${appt.service.name} com ${appt.collaborator.name}`,
-      ].join('\n'),
-    );
+      ].join('\n');
+    }
+
+    await this.whatsapp.sendText(instanceName, rawNumber, cancellationStr);
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }
 
