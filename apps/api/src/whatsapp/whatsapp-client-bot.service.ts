@@ -220,6 +220,21 @@ export class WhatsappClientBotService {
   ): Promise<void> {
     if (client?.isBlocked) return;
 
+    if (messageText.trim() === 'DEBUG CONFIG') {
+      const dbConfig = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
+      await this.whatsapp.sendText(instanceName, rawNumber, `DEBUG CONFIG:\nscheduleConfirmMsg: ${dbConfig?.scheduleConfirmMsg ? 'PRESENT' : 'MISSING'}\nValue: ${dbConfig?.scheduleConfirmMsg}\nID: ${companyId}`);
+      return;
+    }
+
+    if (messageText.trim() === 'DEBUG SAVE') {
+      await this.prisma.whatsappConfig.update({
+        where: { companyId },
+        data: { scheduleConfirmMsg: 'CONFIRMADO!!! {horario}' }
+      });
+      await this.whatsapp.sendText(instanceName, rawNumber, `Salvo no DB.`);
+      return;
+    }
+
     const option = messageText.trim().match(/^(\d)/)?.[1] ?? '';
 
     switch (option) {
