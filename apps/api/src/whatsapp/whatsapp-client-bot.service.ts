@@ -823,11 +823,11 @@ export class WhatsappClientBotService {
     let confirmation = '';
     if (config?.scheduleConfirmMsg) {
       confirmation = config.scheduleConfirmMsg
-        .replace(/{nome}/g, clientName)
-        .replace(/{servico}/g, serviceName)
-        .replace(/{horario}/g, selectedTime)
-        .replace(/{profissional}/g, collabName)
-        .replace(/{data}/g, dateFormatted);
+        .replace(/{\s*nome\s*}/gi, clientName)
+        .replace(/{\s*servico\s*}/gi, serviceName)
+        .replace(/{\s*horario\s*}/gi, selectedTime)
+        .replace(/{\s*profissional\s*}/gi, collabName)
+        .replace(/{\s*data\s*}/gi, dateFormatted);
     } else {
       confirmation = [
         '✅ *Agendamento confirmado!*',
@@ -1174,11 +1174,11 @@ export class WhatsappClientBotService {
     let cancellationStr = '';
     if (config?.cancellationMessage) {
       cancellationStr = config.cancellationMessage
-        .replace(/{nome}/g, appt.client.name)
-        .replace(/{servico}/g, appt.service.name)
-        .replace(/{horario}/g, appt.scheduledTime)
-        .replace(/{profissional}/g, appt.collaborator.name)
-        .replace(/{data}/g, dateFormatted);
+        .replace(/{\s*nome\s*}/gi, appt.client.name)
+        .replace(/{\s*servico\s*}/gi, appt.service.name)
+        .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
+        .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
+        .replace(/{\s*data\s*}/gi, dateFormatted);
     } else {
       cancellationStr = [
         '✅ *Agendamento cancelado!*',

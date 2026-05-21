@@ -10,15 +10,19 @@ interface ReminderRule {
   message?: string;
 }
 
+import { toDate, formatInTimeZone, getTimezoneOffset } from 'date-fns-tz';
+
+const TIMEZONE = 'America/Sao_Paulo';
+
 function utcDateRange(dateStr: string) {
-  const start = new Date(dateStr + 'T00:00:00.000Z');
-  const end = new Date(dateStr + 'T00:00:00.000Z');
-  end.setUTCDate(end.getUTCDate() + 1);
+  // dateStr is 'YYYY-MM-DD'
+  const start = toDate(dateStr + 'T00:00:00.000', { timeZone: TIMEZONE });
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { gte: start, lt: end };
 }
 
 function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return formatInTimeZone(d, TIMEZONE, 'yyyy-MM-dd');
 }
 
 @Injectable()
@@ -67,8 +71,7 @@ export class NotificationSchedulerService {
 
     const now = new Date();
     const todayStr = localDateStr(now);
-    // Current HH:MM
-    const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const localNow = toDate(now, { timeZone: TIMEZONE });
 
     // Sentinel value used in sentReminderMinutes to track daily reminder sent for today
     const DAILY_SENTINEL = 1441;
@@ -78,7 +81,7 @@ export class NotificationSchedulerService {
       // Check if we're within the 5-minute window of the configured time
       const [rH, rM] = reminderTime.split(':').map(Number);
       const reminderMinutes = rH * 60 + rM;
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const nowMinutes = localNow.getHours() * 60 + localNow.getMinutes();
       if (nowMinutes < reminderMinutes || nowMinutes >= reminderMinutes + 5) continue;
 
       // Get all today's SCHEDULED/CONFIRMED appointments that haven't received the daily reminder
@@ -102,11 +105,11 @@ export class NotificationSchedulerService {
       for (const appt of appointments) {
         const dateFormatted = appt.scheduledDate.toISOString().split('T')[0].split('-').reverse().join('/');
         const message =
-          config.reminderMessage?.replace(/{nome}/g, appt.client.name)
-            .replace(/{servico}/g, appt.service.name)
-            .replace(/{horario}/g, appt.scheduledTime)
-            .replace(/{profissional}/g, appt.collaborator.name)
-            .replace(/{data}/g, dateFormatted) ??
+          config.reminderMessage?.replace(/{\s*nome\s*}/gi, appt.client.name)
+            .replace(/{\s*servico\s*}/gi, appt.service.name)
+            .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
+            .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
+            .replace(/{\s*data\s*}/gi, dateFormatted) ??
           `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
 
         await this.notifications.enqueueWhatsapp({
@@ -211,8 +214,8 @@ export class NotificationSchedulerService {
         });
 
         for (const appt of appointments) {
-          // Combine date + local time to get appointment datetime
-          const apptDateTime = new Date(`${dateStr}T${appt.scheduledTime}:00`);
+          // Parse appointment date/time considering the correct timezone
+          const apptDateTime = toDate(`${dateStr}T${appt.scheduledTime}:00`, { timeZone: TIMEZONE });
           if (isNaN(apptDateTime.getTime())) continue;
 
           const sent = appt.sentReminderMinutes as number[];
@@ -230,11 +233,11 @@ export class NotificationSchedulerService {
             const rawMsg = rule.message ?? config.reminderMessage;
             const message = rawMsg 
               ? rawMsg
-                  .replace(/{nome}/g, appt.client.name)
-                  .replace(/{servico}/g, appt.service.name)
-                  .replace(/{horario}/g, appt.scheduledTime)
-                  .replace(/{profissional}/g, appt.collaborator.name)
-                  .replace(/{data}/g, dateFormatted)
+                  .replace(/{\s*nome\s*}/gi, appt.client.name)
+                  .replace(/{\s*servico\s*}/gi, appt.service.name)
+                  .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
+                  .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
+                  .replace(/{\s*data\s*}/gi, dateFormatted)
               : this.buildDefaultMessage(appt, dateStr, rule.minutesBefore);
 
             await this.notifications.enqueueWhatsapp({
