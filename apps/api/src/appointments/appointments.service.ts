@@ -119,9 +119,18 @@ export class AppointmentsService {
 
       const whatsappConfig = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
       if (whatsappConfig?.isConnected) {
-        const message =
-          whatsappConfig.scheduleConfirmMsg ??
-          `Olá ${appointment.client.name}! Agendamento confirmado: ${appointment.service.name} com ${appointment.collaborator.name} em ${dto.scheduledDate} às ${dto.scheduledTime}.`;
+        let message = '';
+        if (whatsappConfig.scheduleConfirmMsg) {
+          message = whatsappConfig.scheduleConfirmMsg
+            .replace(/{\s*nome\s*}/gi, appointment.client.name)
+            .replace(/{\s*servico\s*}/gi, appointment.service.name)
+            .replace(/{\s*horario\s*}/gi, dto.scheduledTime)
+            .replace(/{\s*profissional\s*}/gi, appointment.collaborator.name)
+            .replace(/{\s*data\s*}/gi, dto.scheduledDate.split('-').reverse().join('/'));
+        } else {
+          message = `Olá ${appointment.client.name}! Agendamento confirmado: ${appointment.service.name} com ${appointment.collaborator.name} em ${dto.scheduledDate.split('-').reverse().join('/')} às ${dto.scheduledTime}.`;
+        }
+
         await this.notifications.enqueueWhatsapp({
           companyId,
           instanceName: whatsappConfig.instanceName,
