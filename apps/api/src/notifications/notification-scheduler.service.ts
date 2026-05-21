@@ -95,6 +95,7 @@ export class NotificationSchedulerService {
         select: {
           id: true,
           clientId: true,
+          scheduledDate: true,
           scheduledTime: true,
           client: { select: { whatsappNumber: true, name: true } },
           service: { select: { name: true } },
@@ -103,14 +104,17 @@ export class NotificationSchedulerService {
       });
 
       for (const appt of appointments) {
-        const dateFormatted = appt.scheduledDate.toISOString().split('T')[0].split('-').reverse().join('/');
-        const message =
-          config.reminderMessage?.replace(/{\s*nome\s*}/gi, appt.client.name)
-            .replace(/{\s*servico\s*}/gi, appt.service.name)
-            .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
-            .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
-            .replace(/{\s*data\s*}/gi, dateFormatted) ??
-          `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
+        const dateFormatted = formatInTimeZone(appt.scheduledDate, TIMEZONE, 'dd/MM/yyyy');
+        const rawMsg = config.reminderMessage ?? '';
+        const message = rawMsg.trim()
+          ? rawMsg
+              .replace(/\{\s*nome\s*\}/gi, appt.client.name)
+              .replace(/\{\s*servico\s*\}/gi, appt.service.name)
+              .replace(/\{\s*horario\s*\}/gi, appt.scheduledTime)
+              .replace(/\{\s*profissional\s*\}/gi, appt.collaborator.name)
+              .replace(/\{\s*data\s*\}/gi, dateFormatted)
+          : `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
+        this.logger.debug(`[DailyReminder] appt=${appt.id} date=${dateFormatted} msg=${message.slice(0, 80)}`);
 
         await this.notifications.enqueueWhatsapp({
           companyId: config.companyId,

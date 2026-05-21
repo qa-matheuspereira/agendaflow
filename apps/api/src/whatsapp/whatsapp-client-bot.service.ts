@@ -709,8 +709,11 @@ export class WhatsappClientBotService {
     ctx: BookingContext,
     companyId: string,
     clientId: string | null,
-    config?: WhatsappConfig,
+    _configUnused?: WhatsappConfig,
   ): Promise<void> {
+    // Always fetch fresh config from DB to avoid stale/undefined parameter issues
+    const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
+    this.logger.debug(`[SlotSelection] companyId=${companyId} scheduleConfirmMsg=${JSON.stringify(config?.scheduleConfirmMsg?.slice(0, 60))}`);
     const slots = ctx.slots ?? [];
     const trimmed = text.trim();
 
@@ -820,15 +823,18 @@ export class WhatsappClientBotService {
     const serviceName = service?.name ?? '';
     const collabName = collaborator?.name ?? 'A definir';
 
+    const customMsg = (config?.scheduleConfirmMsg ?? '').trim();
     let confirmation = '';
-    if (config?.scheduleConfirmMsg) {
-      confirmation = config.scheduleConfirmMsg
+    if (customMsg) {
+      this.logger.debug(`[SlotSelection] Using custom template: ${customMsg.slice(0, 80)}`);
+      confirmation = customMsg
         .replace(/{\s*nome\s*}/gi, clientName)
         .replace(/{\s*servico\s*}/gi, serviceName)
         .replace(/{\s*horario\s*}/gi, selectedTime)
         .replace(/{\s*profissional\s*}/gi, collabName)
         .replace(/{\s*data\s*}/gi, dateFormatted);
     } else {
+      this.logger.debug(`[SlotSelection] No custom template found, using default message`);
       confirmation = [
         '✅ *Agendamento confirmado!*',
         '',
