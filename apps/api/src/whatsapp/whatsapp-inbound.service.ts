@@ -97,6 +97,21 @@ export class WhatsappInboundService {
       return;
     }
 
+    const upperText = messageText.trim().toUpperCase();
+    if (upperText === 'DEBUG CONFIG' || upperText === 'DEBUG SAVE') {
+      const rawNumber = stripJid(data.key.remoteJid);
+      if (upperText === 'DEBUG CONFIG') {
+        await this.whatsapp.sendText(instanceName, rawNumber, `DEBUG CONFIG GLOBAL:\nscheduleConfirmMsg: ${config.scheduleConfirmMsg ? 'PRESENT' : 'MISSING'}\nValue: ${config.scheduleConfirmMsg}\nID: ${config.companyId}`);
+      } else {
+        await this.prisma.whatsappConfig.update({
+          where: { companyId: config.companyId },
+          data: { scheduleConfirmMsg: 'CONFIRMADO GLOBAL!!! {horario}' }
+        });
+        await this.whatsapp.sendText(instanceName, rawNumber, `Salvo no DB GLOBAL.`);
+      }
+      return;
+    }
+
     const rawNumber = stripJid(data.key.remoteJid);
     const isLid = data.key.remoteJid.includes('@lid');
     const rawLidNumber = isLid ? numberForLookup(data.key.remoteJid) : null;
