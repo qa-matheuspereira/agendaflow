@@ -97,35 +97,23 @@ export class WhatsappInboundService {
       return;
     }
 
-    const upperText = messageText.trim().toUpperCase();
-    if (upperText === 'DEBUG CONFIG' || upperText === 'DEBUG SAVE') {
-      const rawNumber = stripJid(data.key.remoteJid);
-      if (upperText === 'DEBUG CONFIG') {
-        await this.whatsapp.sendText(instanceName, rawNumber, `DEBUG CONFIG GLOBAL:\nscheduleConfirmMsg: ${config.scheduleConfirmMsg ? 'PRESENT' : 'MISSING'}\nValue: ${config.scheduleConfirmMsg}\nID: ${config.companyId}`);
-      } else {
-        await this.prisma.whatsappConfig.update({
-          where: { companyId: config.companyId },
-          data: { scheduleConfirmMsg: 'CONFIRMADO GLOBAL!!! {horario}' }
-        });
-        await this.whatsapp.sendText(instanceName, rawNumber, `Salvo no DB GLOBAL.`);
-      }
-      return;
-    }
-
     const rawNumber = stripJid(data.key.remoteJid);
     const isLid = data.key.remoteJid.includes('@lid');
     const rawLidNumber = isLid ? numberForLookup(data.key.remoteJid) : null;
     let lookupNumber = numberForLookup(data.key.remoteJid);
+    let resolvedPhone: string | null = null;
 
     // @lid é um ID opaco do WhatsApp — tenta resolver para número real via Evolution API
     if (isLid) {
-      const resolved = await this.whatsapp.resolvePhoneFromLid(instanceName, data.key.remoteJid);
-      if (resolved) lookupNumber = resolved;
+      resolvedPhone = await this.whatsapp.resolvePhoneFromLid(instanceName, data.key.remoteJid);
+      if (resolvedPhone) lookupNumber = resolvedPhone;
     }
 
-    const sendNumber = rawNumber;
+    // Prefer sending to the resolved real number; fall back to @lid JID only if unresolved.
+    // Using the real number ensures clients are stored/displayed with correct phone in the panel.
+    const sendNumber = resolvedPhone ?? rawNumber;
 
-    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber}`);
+    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber} resolvedPhone=${resolvedPhone}`);
 
     const altNumber = brazilianAlternate(lookupNumber);
     const numberVariants = altNumber ? [lookupNumber, altNumber] : [lookupNumber];
@@ -160,7 +148,7 @@ export class WhatsappInboundService {
       }),
       this.prisma.client.findFirst({
         where: clientWhere,
-        select: { id: true, name: true, isBlocked: true },
+        select: { id: true, name: true, isBlocked: true, whatsappNumber: true },
       }),
     ]);
 
@@ -171,6 +159,15 @@ export class WhatsappInboundService {
       this.prisma.collaborator.update({
         where: { id: collaborator.id },
         data: { whatsappLid: rawLidNumber },
+      }).catch(() => { /* non-critical */ });
+    }
+
+    // Migra cliente com número @lid armazenado para o número real quando resolvido.
+    // Garante que o painel exiba o número correto e notificações sejam entregues.
+    if (client && resolvedPhone && client.whatsappNumber !== resolvedPhone) {
+      this.prisma.client.update({
+        where: { id: client.id },
+        data: { whatsappNumber: resolvedPhone },
       }).catch(() => { /* non-critical */ });
     }
 

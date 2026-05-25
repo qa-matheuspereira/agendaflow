@@ -33,6 +33,10 @@ function conversationExpiresAt(): Date {
   return new Date(Date.now() + CONVERSATION_TTL_MS);
 }
 
+function applyPlaceholders(template: string, vars: Record<string, string>): string {
+  return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
+}
+
 function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
   return h * 60 + m;
@@ -219,23 +223,6 @@ export class WhatsappClientBotService {
     companyId: string,
   ): Promise<void> {
     if (client?.isBlocked) return;
-
-    const upperText = messageText.trim().toUpperCase();
-
-    if (upperText === 'DEBUG CONFIG') {
-      const dbConfig = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-      await this.whatsapp.sendText(instanceName, rawNumber, `DEBUG CONFIG:\nscheduleConfirmMsg: ${dbConfig?.scheduleConfirmMsg ? 'PRESENT' : 'MISSING'}\nValue: ${dbConfig?.scheduleConfirmMsg}\nID: ${companyId}`);
-      return;
-    }
-
-    if (upperText === 'DEBUG SAVE') {
-      await this.prisma.whatsappConfig.update({
-        where: { companyId },
-        data: { scheduleConfirmMsg: 'CONFIRMADO!!! {horario}' }
-      });
-      await this.whatsapp.sendText(instanceName, rawNumber, `Salvo no DB.`);
-      return;
-    }
 
     const option = messageText.trim().match(/^(\d)/)?.[1] ?? '';
 
@@ -695,7 +682,7 @@ export class WhatsappClientBotService {
       collaboratorId: ctx.selectedCollaboratorId,
     } as Parameters<ScheduleEngineService['getAvailableSlots']>[1]);
 
-    const availableSlots = allSlots.filter((s) => s.available).slice(0, 8).map((s) => s.time);
+    const availableSlots = allSlots.filter((s) => s.available).map((s) => s.time);
 
     const [y, m, day] = dateStr.split('-').map(Number);
     const dateLabel = `${String(day).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
@@ -844,12 +831,13 @@ export class WhatsappClientBotService {
     let confirmation = '';
     if (customMsg) {
       this.logger.debug(`[SlotSelection] Using custom template: ${customMsg.slice(0, 80)}`);
-      confirmation = customMsg
-        .replace(/{\s*nome\s*}/gi, clientName)
-        .replace(/{\s*servico\s*}/gi, serviceName)
-        .replace(/{\s*horario\s*}/gi, selectedTime)
-        .replace(/{\s*profissional\s*}/gi, collabName)
-        .replace(/{\s*data\s*}/gi, dateFormatted);
+      confirmation = applyPlaceholders(customMsg, {
+        nome: clientName,
+        servico: serviceName,
+        horario: selectedTime,
+        profissional: collabName,
+        data: dateFormatted,
+      });
     } else {
       this.logger.debug(`[SlotSelection] No custom template found, using default message`);
       confirmation = [
@@ -1125,6 +1113,7 @@ export class WhatsappClientBotService {
     const appt = await this.prisma.appointment.findFirst({
       where: { id: appointmentId, companyId, clientId },
       include: {
+        client: { select: { name: true } },
         service: { select: { name: true } },
         collaborator: { select: { name: true } },
       },
@@ -1196,12 +1185,13 @@ export class WhatsappClientBotService {
 
     let cancellationStr = '';
     if (config?.cancellationMessage) {
-      cancellationStr = config.cancellationMessage
-        .replace(/{\s*nome\s*}/gi, appt.client.name)
-        .replace(/{\s*servico\s*}/gi, appt.service.name)
-        .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
-        .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
-        .replace(/{\s*data\s*}/gi, dateFormatted);
+      cancellationStr = applyPlaceholders(config.cancellationMessage, {
+        nome: appt.client.name,
+        servico: appt.service.name,
+        horario: appt.scheduledTime,
+        profissional: appt.collaborator.name,
+        data: dateFormatted,
+      });
     } else {
       cancellationStr = [
         '✅ *Agendamento cancelado!*',

@@ -23,6 +23,10 @@ function timeToMinutes(time: string): number {
   return h * 60 + m;
 }
 
+function applyPlaceholders(template: string, vars: Record<string, string>): string {
+  return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
+}
+
 function minutesToTime(minutes: number): string {
   const h = Math.floor(minutes / 60).toString().padStart(2, '0');
   const m = (minutes % 60).toString().padStart(2, '0');
@@ -121,12 +125,13 @@ export class AppointmentsService {
       if (whatsappConfig?.isConnected) {
         let message = '';
         if (whatsappConfig.scheduleConfirmMsg) {
-          message = whatsappConfig.scheduleConfirmMsg
-            .replace(/{\s*nome\s*}/gi, appointment.client.name)
-            .replace(/{\s*servico\s*}/gi, appointment.service.name)
-            .replace(/{\s*horario\s*}/gi, dto.scheduledTime)
-            .replace(/{\s*profissional\s*}/gi, appointment.collaborator.name)
-            .replace(/{\s*data\s*}/gi, dto.scheduledDate.split('-').reverse().join('/'));
+          message = applyPlaceholders(whatsappConfig.scheduleConfirmMsg, {
+            nome: appointment.client.name,
+            servico: appointment.service.name,
+            horario: dto.scheduledTime,
+            profissional: appointment.collaborator.name,
+            data: dto.scheduledDate.split('-').reverse().join('/'),
+          });
         } else {
           message = `Olá ${appointment.client.name}! Agendamento confirmado: ${appointment.service.name} com ${appointment.collaborator.name} em ${dto.scheduledDate.split('-').reverse().join('/')} às ${dto.scheduledTime}.`;
         }
@@ -364,9 +369,16 @@ export class AppointmentsService {
     const whatsappConfig = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
     if (whatsappConfig?.isConnected) {
       const dateStr = appt.scheduledDate.toISOString().split('T')[0];
-      const appointmentDetails = `*${appt.service.name}* com ${appt.collaborator.name} em ${dateStr} às ${appt.scheduledTime}`;
+      const dateFormatted = dateStr.split('-').reverse().join('/');
+      const appointmentDetails = `*${appt.service.name}* com ${appt.collaborator.name} em ${dateFormatted} às ${appt.scheduledTime}`;
       const message = whatsappConfig.cancellationMessage
-        ? `${whatsappConfig.cancellationMessage}\n\nAgendamento: ${appointmentDetails}`
+        ? applyPlaceholders(whatsappConfig.cancellationMessage, {
+            nome: appt.client.name,
+            servico: appt.service.name,
+            horario: appt.scheduledTime,
+            profissional: appt.collaborator.name,
+            data: dateFormatted,
+          })
         : `Olá, ${appt.client.name}! Seu agendamento de ${appointmentDetails} foi cancelado.${dto.reason ? `\nMotivo: ${dto.reason}` : ''}`;
       await this.notifications.enqueueWhatsapp({
         companyId,
@@ -426,7 +438,7 @@ export class AppointmentsService {
     await this.audit.log({
       companyId,
       userId,
-      action: AuditAction.SETTINGS_UPDATED,
+      action: AuditAction.APPOINTMENT_DELETED,
       entity: 'Appointment',
       entityId: id,
       newValue: { deleted: true },

@@ -10,19 +10,26 @@ interface ReminderRule {
   message?: string;
 }
 
-import { toDate, formatInTimeZone, getTimezoneOffset } from 'date-fns-tz';
+import { toDate, formatInTimeZone } from 'date-fns-tz';
 
 const TIMEZONE = 'America/Sao_Paulo';
 
+// Appointments are stored with scheduledDate as UTC midnight (new Date(dateStr + 'T00:00:00.000Z')).
+// This range must match that convention — do NOT convert to São Paulo midnight.
 function utcDateRange(dateStr: string) {
-  // dateStr is 'YYYY-MM-DD'
-  const start = toDate(dateStr + 'T00:00:00.000', { timeZone: TIMEZONE });
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const start = new Date(dateStr + 'T00:00:00.000Z');
+  const end = new Date(dateStr + 'T00:00:00.000Z');
+  end.setUTCDate(end.getUTCDate() + 1);
   return { gte: start, lt: end };
 }
 
 function localDateStr(d: Date): string {
   return formatInTimeZone(d, TIMEZONE, 'yyyy-MM-dd');
+}
+
+// Handles both ASCII {key} and full-width ｛key｝ braces (mobile/browser encoding variants)
+function applyPlaceholders(template: string, vars: Record<string, string>): string {
+  return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
 }
 
 @Injectable()
@@ -71,7 +78,10 @@ export class NotificationSchedulerService {
 
     const now = new Date();
     const todayStr = localDateStr(now);
-    const localNow = toDate(now, { timeZone: TIMEZONE });
+
+    // Get current time in São Paulo (server may run in UTC)
+    const [spHStr, spMStr] = formatInTimeZone(now, TIMEZONE, 'HH:mm').split(':');
+    const spNowMinutes = Number(spHStr) * 60 + Number(spMStr);
 
     // Sentinel value used in sentReminderMinutes to track daily reminder sent for today
     const DAILY_SENTINEL = 1441;
@@ -81,7 +91,7 @@ export class NotificationSchedulerService {
       // Check if we're within the 5-minute window of the configured time
       const [rH, rM] = reminderTime.split(':').map(Number);
       const reminderMinutes = rH * 60 + rM;
-      const nowMinutes = localNow.getHours() * 60 + localNow.getMinutes();
+      const nowMinutes = spNowMinutes;
       if (nowMinutes < reminderMinutes || nowMinutes >= reminderMinutes + 5) continue;
 
       // Get all today's SCHEDULED/CONFIRMED appointments that haven't received the daily reminder
@@ -107,12 +117,13 @@ export class NotificationSchedulerService {
         const dateFormatted = formatInTimeZone(appt.scheduledDate, TIMEZONE, 'dd/MM/yyyy');
         const rawMsg = config.reminderMessage ?? '';
         const message = rawMsg.trim()
-          ? rawMsg
-              .replace(/\{\s*nome\s*\}/gi, appt.client.name)
-              .replace(/\{\s*servico\s*\}/gi, appt.service.name)
-              .replace(/\{\s*horario\s*\}/gi, appt.scheduledTime)
-              .replace(/\{\s*profissional\s*\}/gi, appt.collaborator.name)
-              .replace(/\{\s*data\s*\}/gi, dateFormatted)
+          ? applyPlaceholders(rawMsg, {
+              nome: appt.client.name,
+              servico: appt.service.name,
+              horario: appt.scheduledTime,
+              profissional: appt.collaborator.name,
+              data: dateFormatted,
+            })
           : `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
         this.logger.debug(`[DailyReminder] appt=${appt.id} date=${dateFormatted} msg=${message.slice(0, 80)}`);
 
@@ -235,15 +246,18 @@ export class NotificationSchedulerService {
 
             const dateFormatted = dateStr.split('-').reverse().join('/');
             const rawMsg = rule.message ?? config.reminderMessage;
-            const message = rawMsg 
-              ? rawMsg
-                  .replace(/{\s*nome\s*}/gi, appt.client.name)
-                  .replace(/{\s*servico\s*}/gi, appt.service.name)
-                  .replace(/{\s*horario\s*}/gi, appt.scheduledTime)
-                  .replace(/{\s*profissional\s*}/gi, appt.collaborator.name)
-                  .replace(/{\s*data\s*}/gi, dateFormatted)
+            this.logger.debug(`[Reminder] appt=${appt.id} rawMsg=${JSON.stringify(rawMsg)?.slice(0, 150)} time=${appt.scheduledTime} date=${dateFormatted}`);
+            const message = rawMsg
+              ? applyPlaceholders(rawMsg, {
+                  nome: appt.client.name,
+                  servico: appt.service.name,
+                  horario: appt.scheduledTime,
+                  profissional: appt.collaborator.name,
+                  data: dateFormatted,
+                })
               : this.buildDefaultMessage(appt, dateStr, rule.minutesBefore);
 
+            this.logger.debug(`[Reminder] mensagem final (80 chars): ${message.slice(0, 80)}`);
             await this.notifications.enqueueWhatsapp({
               companyId: config.companyId,
               instanceName: config.instanceName,
