@@ -103,29 +103,28 @@ export class NotificationSchedulerService {
       const nowMinutes = spNowMinutes;
       if (nowMinutes < reminderMinutes || nowMinutes >= reminderMinutes + 5) continue;
 
-      // Get all today's SCHEDULED/CONFIRMED appointments that haven't received the daily reminder
-      const appointments = await this.prisma.appointment.findMany({
+      // Fetch all today's SCHEDULED/CONFIRMED appointments — filter sentinel in JS to avoid
+      // PostgreSQL ANY(empty_array) = NULL issue that silently excludes rows.
+      const allAppointments = await this.prisma.appointment.findMany({
         where: {
           companyId: config.companyId,
           status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
           scheduledDate: utcDateRange(todayStr),
-          // ANY(empty_array) returns NULL in PostgreSQL, so NOT has on [] also returns NULL → excluded.
-          // OR isEmpty handles the empty array case explicitly.
-          OR: [
-            { sentReminderMinutes: { isEmpty: true } },
-            { NOT: { sentReminderMinutes: { has: DAILY_SENTINEL } } },
-          ],
         },
         select: {
           id: true,
           clientId: true,
           scheduledDate: true,
           scheduledTime: true,
+          sentReminderMinutes: true,
           client: { select: { whatsappNumber: true, name: true } },
           service: { select: { name: true } },
           collaborator: { select: { name: true } },
         },
       });
+      const appointments = allAppointments.filter(
+        (a) => !(a.sentReminderMinutes as number[]).includes(DAILY_SENTINEL),
+      );
 
       for (const appt of appointments) {
         const dateFormatted = formatInTimeZone(appt.scheduledDate, TIMEZONE, 'dd/MM/yyyy');
