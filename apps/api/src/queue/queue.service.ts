@@ -281,6 +281,42 @@ export class QueueService {
     this.gateway.emitQueueState(companyId, state);
   }
 
+  async completeEntry(companyId: string, entryId: string, userId: string): Promise<QueueEntryPublic> {
+    const entry = await this.prisma.queueEntry.findFirst({ where: { companyId, id: entryId } });
+    if (!entry) throw new NotFoundException('Entrada na fila não encontrada');
+    if (entry.status === QueueStatus.DONE || entry.status === QueueStatus.LEFT) {
+      throw new BadRequestException('Entrada não está ativa na fila');
+    }
+
+    const updated = await this.prisma.queueEntry.update({
+      where: { id: entryId },
+      data: { status: QueueStatus.DONE, completedAt: new Date() },
+      include: { client: true, collaborator: true, service: true },
+    });
+
+    await Promise.all([
+      this.prisma.client.update({
+        where: { id: entry.clientId },
+        data: { totalVisits: { increment: 1 }, lastVisitAt: new Date() },
+      }),
+      this.audit.log({
+        companyId,
+        userId,
+        action: AuditAction.QUEUE_COMPLETED,
+        entity: 'QueueEntry',
+        entityId: entryId,
+      }),
+    ]);
+
+    const publicEntry = this.toPublic(updated as QueueEntryFull);
+    this.gateway.emitQueueUpdated(companyId, publicEntry);
+
+    const state = await this.buildQueueState(companyId);
+    this.gateway.emitQueueState(companyId, state);
+
+    return publicEntry;
+  }
+
   async reorderQueue(companyId: string, dto: ReorderQueueDto, userId: string): Promise<QueueState> {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);

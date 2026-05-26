@@ -83,3 +83,14 @@ export function useLeaveQueue() {
     },
   });
 }
+
+export function useCompleteQueueEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.patch<QueueEntryPublic>(`/queue/${id}/complete`).then((res) => res.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queue'] });
+    },
+  });
+}

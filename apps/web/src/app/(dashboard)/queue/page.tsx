@@ -6,13 +6,14 @@ import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   Plus, Phone, Play, CheckCircle2, XCircle, ArrowUp, ArrowDown,
-  Loader2, Users, Clock, Zap, Crown, Wifi, WifiOff, Timer,
+  Loader2, Users, Clock, Zap, Crown, Wifi, WifiOff, Timer, UserX,
 } from 'lucide-react';
 
 import { useQueueSocket } from '@/hooks/use-queue-socket';
 import {
   useJoinQueue, useCallNext, useStartQueueService,
   useFinishQueueService, useLeaveQueue, useReorderQueue, useQueueState,
+  useCompleteQueueEntry,
 } from '@/hooks/api/use-queue';
 import { useClients } from '@/hooks/api/use-clients';
 import { useCollaborators } from '@/hooks/api/use-collaborators';
@@ -84,6 +85,7 @@ export default function QueuePage() {
   const startMutation = useStartQueueService();
   const finishMutation = useFinishQueueService();
   const leaveMutation = useLeaveQueue();
+  const completeMutation = useCompleteQueueEntry();
   const reorderMutation = useReorderQueue();
 
   const entries = useMemo(() => queueState?.entries ?? [], [queueState]);
@@ -154,6 +156,15 @@ export default function QueuePage() {
       toast.success('Removido da fila');
     } catch {
       toast.error('Erro ao remover');
+    }
+  }
+
+  async function handleComplete(id: string) {
+    try {
+      await completeMutation.mutateAsync(id);
+      toast.success('Atendimento concluído');
+    } catch {
+      toast.error('Erro ao concluir');
     }
   }
 
@@ -260,6 +271,14 @@ export default function QueuePage() {
                   <ArrowDown className="h-4 w-4" />
                 </Button>
                 <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => handleComplete(entry.id)}
+                  title="Concluir atendimento"
+                >
+                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Concluir
+                </Button>
+                <Button
                   variant="ghost"
                   size="icon"
                   className="h-8 w-8 text-destructive hover:text-destructive"
@@ -277,11 +296,19 @@ export default function QueuePage() {
                 </Button>
                 <Button
                   size="sm"
+                  variant="default"
+                  onClick={() => handleComplete(entry.id)}
+                >
+                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Concluir
+                </Button>
+                <Button
+                  size="sm"
                   variant="ghost"
                   className="text-destructive"
                   onClick={() => handleRemove(entry.id)}
+                  title="Ausente"
                 >
-                  <XCircle className="mr-1 h-3.5 w-3.5" /> Remover
+                  <UserX className="mr-1 h-3.5 w-3.5" /> Ausente
                 </Button>
               </>
             )}

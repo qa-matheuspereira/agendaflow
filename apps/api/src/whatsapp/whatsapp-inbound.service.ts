@@ -103,6 +103,28 @@ export class WhatsappInboundService {
     let lookupNumber = numberForLookup(data.key.remoteJid);
     let resolvedPhone: string | null = null;
 
+    // VINCULAR: colaborador sem @lid salvo envia "VINCULAR 5521999999999" para se auto-registrar
+    if (isLid && rawLidNumber) {
+      const vinculaMatch = messageText.match(/^VINCULAR\s+(\d{10,15})\s*$/i);
+      if (vinculaMatch) {
+        const phone = vinculaMatch[1];
+        const collab = await this.prisma.collaborator.findFirst({
+          where: { companyId: config.companyId, whatsappNumber: phone, isActive: true },
+          select: { id: true, name: true },
+        });
+        if (collab) {
+          await this.prisma.collaborator.update({
+            where: { id: collab.id },
+            data: { whatsappLid: rawLidNumber },
+          });
+          await this.whatsapp.sendText(instanceName, rawNumber, `✅ Vínculo criado com sucesso!\n\nSeu WhatsApp foi associado à conta *${collab.name}*. Agora você receberá as notificações corretamente.`);
+        } else {
+          await this.whatsapp.sendText(instanceName, rawNumber, `❌ Colaborador com número ${phone} não encontrado nesta empresa. Verifique o número e tente novamente.`);
+        }
+        return;
+      }
+    }
+
     // @lid é um ID opaco do WhatsApp — tenta resolver para número real via Evolution API
     if (isLid) {
       resolvedPhone = await this.whatsapp.resolvePhoneFromLid(instanceName, data.key.remoteJid);

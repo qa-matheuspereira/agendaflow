@@ -70,6 +70,15 @@ export class NotificationSchedulerService {
     }
   }
 
+  @Cron('*/5 * * * *')
+  async autoCompleteAppointments(): Promise<void> {
+    try {
+      await this.processAutoComplete();
+    } catch (err) {
+      this.logger.error('Erro ao processar auto-conclusão de agendamentos', err);
+    }
+  }
+
   private async processDailyReminders(): Promise<void> {
     const configs = await this.prisma.whatsappConfig.findMany({
       where: { isConnected: true, dailyReminderEnabled: true },
@@ -278,6 +287,46 @@ export class NotificationSchedulerService {
           }
         }
       }
+    }
+  }
+
+  private async processAutoComplete(): Promise<void> {
+    const now = new Date();
+    const todayStr = localDateStr(now);
+
+    const [spHStr, spMStr] = formatInTimeZone(now, TIMEZONE, 'HH:mm').split(':');
+    const spNowMinutes = Number(spHStr) * 60 + Number(spMStr);
+
+    // Only auto-complete after a 15-minute grace period past the appointment's end time
+    const GRACE_MINUTES = 15;
+    const cutoffMinutes = spNowMinutes - GRACE_MINUTES;
+    if (cutoffMinutes <= 0) return;
+
+    const appointments = await this.prisma.appointment.findMany({
+      where: {
+        scheduledDate: utcDateRange(todayStr),
+        status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED, AppointmentStatus.IN_PROGRESS] },
+      },
+      select: { id: true, companyId: true, clientId: true, endTime: true },
+    });
+
+    for (const appt of appointments) {
+      const [eH, eM] = appt.endTime.split(':').map(Number);
+      if (isNaN(eH) || isNaN(eM)) continue;
+      const endMinutes = eH * 60 + eM;
+      if (endMinutes > cutoffMinutes) continue;
+
+      await this.prisma.appointment.update({
+        where: { id: appt.id },
+        data: { status: AppointmentStatus.COMPLETED, completedAt: new Date() },
+      });
+
+      await this.prisma.client.update({
+        where: { id: appt.clientId },
+        data: { totalVisits: { increment: 1 }, lastVisitAt: new Date() },
+      });
+
+      this.logger.log(`Auto-concluído agendamento ${appt.id} (empresa ${appt.companyId})`);
     }
   }
 

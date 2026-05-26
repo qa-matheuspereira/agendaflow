@@ -99,4 +99,15 @@ export class QueueController {
   ) {
     return this.queueService.leaveQueue(companyId, id, userId);
   }
+
+  @Patch(':id/complete')
+  @Roles(UserRole.RECEPTIONIST)
+  @ApiOperation({ summary: 'Concluir entrada na fila diretamente (qualquer status ativo)' })
+  completeEntry(
+    @CurrentTenant() companyId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.queueService.completeEntry(companyId, id, userId);
+  }
 }
