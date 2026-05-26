@@ -156,6 +156,7 @@ export default function SettingsPage() {
   const [waAutoConfirmHours, setWaAutoConfirmHours] = useState(2);
   const [waDailyReminderEnabled, setWaDailyReminderEnabled] = useState(false);
   const [waDailyReminderTime, setWaDailyReminderTime] = useState('07:00');
+  const [waDailyReminderMessage, setWaDailyReminderMessage] = useState('');
   const [waSkipCollaborator, setWaSkipCollaborator] = useState(false);
   const [waAllowMultipleServices, setWaAllowMultipleServices] = useState(false);
 
@@ -173,6 +174,7 @@ export default function SettingsPage() {
       setWaAutoConfirmHours(waConfig.autoConfirmHours ?? 2);
       setWaDailyReminderEnabled(waConfig.dailyReminderEnabled ?? false);
       setWaDailyReminderTime(waConfig.dailyReminderTime ?? '07:00');
+      setWaDailyReminderMessage(waConfig.dailyReminderMessage ?? '');
       setWaSkipCollaborator(waConfig.skipCollaboratorSelection ?? false);
       setWaAllowMultipleServices(waConfig.allowMultipleServices ?? false);
     }
@@ -205,6 +207,7 @@ export default function SettingsPage() {
         autoConfirmHours: waAutoConfirmHours,
         dailyReminderEnabled: waDailyReminderEnabled,
         dailyReminderTime: waDailyReminderTime,
+        dailyReminderMessage: waDailyReminderMessage,
         skipCollaboratorSelection: waSkipCollaborator,
         allowMultipleServices: waAllowMultipleServices,
       });
@@ -629,15 +632,27 @@ export default function SettingsPage() {
                       <Label htmlFor="dailyReminderEnabled">Lembrete diário no horário fixo</Label>
                     </div>
                     {waDailyReminderEnabled && (
-                      <div className="flex items-center gap-3 pl-6">
-                        <Label>Horário do lembrete</Label>
-                        <Input
-                          type="time"
-                          value={waDailyReminderTime}
-                          onChange={(e) => setWaDailyReminderTime(e.target.value)}
-                          className="w-32"
-                        />
-                        <span className="text-xs text-muted-foreground">Lembra todos os clientes do dia neste horário</span>
+                      <div className="pl-6 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Label>Horário do lembrete</Label>
+                          <Input
+                            type="time"
+                            value={waDailyReminderTime}
+                            onChange={(e) => setWaDailyReminderTime(e.target.value)}
+                            className="w-32"
+                          />
+                          <span className="text-xs text-muted-foreground">Lembra todos os clientes do dia neste horário</span>
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Mensagem do lembrete diário</Label>
+                          <Textarea
+                            value={waDailyReminderMessage}
+                            onChange={(e) => setWaDailyReminderMessage(e.target.value)}
+                            rows={2}
+                            placeholder="Olá {nome}! Lembrando seu agendamento de {servico} hoje às {horario}."
+                          />
+                          <p className="text-xs text-muted-foreground">Variáveis: {'{nome}'} {'{servico}'} {'{horario}'} {'{profissional}'} {'{data}'}</p>
+                        </div>
                       </div>
                     )}
                   </div>

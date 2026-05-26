@@ -58,6 +58,10 @@ export class UpdateWhatsappConfigDto {
   dailyReminderTime?: string;
 
   @IsOptional()
+  @IsString()
+  dailyReminderMessage?: string;
+
+  @IsOptional()
   @IsBoolean()
   skipCollaboratorSelection?: boolean;
 

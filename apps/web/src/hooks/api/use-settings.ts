@@ -35,6 +35,7 @@ export interface WhatsappConfig {
   autoConfirmHours: number;
   dailyReminderEnabled: boolean;
   dailyReminderTime: string;
+  dailyReminderMessage: string;
   skipCollaboratorSelection?: boolean;
   allowMultipleServices?: boolean;
 }

@@ -539,6 +539,7 @@ model WhatsappConfig {
   reminderRules          Json    @default("[]")
   dailyReminderEnabled   Boolean @default(false)
   dailyReminderTime      String  @default("07:00")
+  dailyReminderMessage   String? @db.Text
   autoConfirmEnabled     Boolean @default(false)
   autoConfirmHours    Int     @default(2)
   skipCollaboratorSelection Boolean @default(false)

@@ -73,7 +73,7 @@ export class NotificationSchedulerService {
   private async processDailyReminders(): Promise<void> {
     const configs = await this.prisma.whatsappConfig.findMany({
       where: { isConnected: true, dailyReminderEnabled: true },
-      select: { companyId: true, instanceName: true, dailyReminderTime: true, reminderMessage: true },
+      select: { companyId: true, instanceName: true, dailyReminderTime: true, reminderMessage: true, dailyReminderMessage: true },
     });
 
     const now = new Date();
@@ -115,7 +115,7 @@ export class NotificationSchedulerService {
 
       for (const appt of appointments) {
         const dateFormatted = formatInTimeZone(appt.scheduledDate, TIMEZONE, 'dd/MM/yyyy');
-        const rawMsg = config.reminderMessage ?? '';
+        const rawMsg = (config.dailyReminderMessage ?? config.reminderMessage ?? '');
         const message = rawMsg.trim()
           ? applyPlaceholders(rawMsg, {
               nome: appt.client.name,
