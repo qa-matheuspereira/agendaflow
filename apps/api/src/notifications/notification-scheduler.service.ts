@@ -109,7 +109,12 @@ export class NotificationSchedulerService {
           companyId: config.companyId,
           status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
           scheduledDate: utcDateRange(todayStr),
-          NOT: { sentReminderMinutes: { has: DAILY_SENTINEL } },
+          // ANY(empty_array) returns NULL in PostgreSQL, so NOT has on [] also returns NULL → excluded.
+          // OR isEmpty handles the empty array case explicitly.
+          OR: [
+            { sentReminderMinutes: { isEmpty: true } },
+            { NOT: { sentReminderMinutes: { has: DAILY_SENTINEL } } },
+          ],
         },
         select: {
           id: true,
