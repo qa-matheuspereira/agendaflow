@@ -78,9 +78,9 @@ export default function ServicesPage() {
       requiresDocument: svc.requiresDocument,
       documentInstruction: svc.documentInstruction ?? '',
       requiresAdvancePayment: svc.requiresAdvancePayment,
-      advancePaymentType: svc.advancePaymentType,
-      advancePaymentValue: svc.advancePaymentValue,
-      maxDailyAppointments: svc.maxDailyAppointments,
+      advancePaymentType: svc.advancePaymentType ?? undefined,
+      advancePaymentValue: svc.advancePaymentValue ?? undefined,
+      maxDailyAppointments: svc.maxDailyAppointments ?? undefined,
       order: svc.order,
       schedulingMode: svc.schedulingMode ?? 'SCHEDULE',
       autoDistribute: svc.autoDistribute ?? false,
@@ -261,7 +261,7 @@ export default function ServicesPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit, (errs) => { console.error('[ServiceForm] validation errors:', errs); toast.error('Campos inválidos: ' + Object.keys(errs).join(', ')); })} className="space-y-4">
               <FormField
                 control={form.control}
                 name="name"

@@ -109,13 +109,19 @@ export class ScheduleEngineService {
       closeTime = specialDay?.closeTime ?? bh.closeTime;
       slotDurationMin = bh.slotDurationMin;
     } else {
-      const companyHour = await this.prisma.businessHour.findFirst({
+      // Try company-level hours first; fall back to any collaborator's hours if not configured at company level
+      let bh = await this.prisma.businessHour.findFirst({
         where: { companyId, collaboratorId: null, dayOfWeek, isOpen: true },
       });
-      if (!companyHour) return [];
-      openTime = specialDay?.openTime ?? companyHour.openTime;
-      closeTime = specialDay?.closeTime ?? companyHour.closeTime;
-      slotDurationMin = companyHour.slotDurationMin;
+      if (!bh && collaboratorIds.length > 0) {
+        bh = await this.prisma.businessHour.findFirst({
+          where: { companyId, collaboratorId: { in: collaboratorIds }, dayOfWeek, isOpen: true },
+        });
+      }
+      if (!bh) return [];
+      openTime = specialDay?.openTime ?? bh.openTime;
+      closeTime = specialDay?.closeTime ?? bh.closeTime;
+      slotDurationMin = bh.slotDurationMin;
     }
 
     if (!openTime || !closeTime) return [];
