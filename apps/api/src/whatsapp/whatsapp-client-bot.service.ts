@@ -354,7 +354,6 @@ export class WhatsappClientBotService {
       lines.push(`${i + 1} - ${modeIcon} ${s.name} • ${s.durationMinutes} min • ${price}`);
     });
     lines.push('', '0 - Voltar ao menu');
-    lines.push('', '📅 Agendamento  🕐 Fila de espera');
     lines.push('', 'Digite o número do serviço desejado.');
 
     await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
@@ -907,7 +906,8 @@ export class WhatsappClientBotService {
     });
 
     if (allCollabs.length === 0) {
-      return { collaboratorId: await this.leastLoadedCollaborator(companyId, null), needsSelection: false };
+      // No collaborators linked to this service — pass null so schedule engine searches all
+      return { collaboratorId: null, needsSelection: false };
     }
 
     if (autoDistribute) {

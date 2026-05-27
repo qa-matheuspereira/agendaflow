@@ -51,7 +51,10 @@ export const createServiceSchema = z.object({
   requiresAdvancePayment: z.boolean().optional(),
   advancePaymentType: z.enum(['PERCENTAGE', 'FIXED']).optional(),
   advancePaymentValue: z.coerce.number().min(0).optional(),
-  maxDailyAppointments: z.coerce.number().min(1).optional(),
+  maxDailyAppointments: z.preprocess(
+    (v) => (v === '' || v === undefined || v === null ? undefined : Number(v)),
+    z.number().min(1).optional(),
+  ),
   order: z.coerce.number().min(0).optional(),
   schedulingMode: z.enum(['SCHEDULE', 'QUEUE']).optional(),
   autoDistribute: z.boolean().optional(),
