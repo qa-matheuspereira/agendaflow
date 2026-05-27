@@ -88,6 +88,16 @@ export class ScheduleEngineService {
         select: { id: true },
       });
       collaboratorIds.push(...collabs.map((c) => c.id));
+
+      // If no collaborators linked to this service, fall back to all active company collaborators
+      if (collaboratorIds.length === 0) {
+        const allCollabs = await this.prisma.collaborator.findMany({
+          where: { companyId, isActive: true },
+          select: { id: true },
+        });
+        collaboratorIds.push(...allCollabs.map((c) => c.id));
+        this.logger.warn(`No collaborators linked to service ${dto.serviceId} — falling back to all ${allCollabs.length} active collaborators`);
+      }
     }
 
     if (collaboratorIds.length === 0) return [];

@@ -106,8 +106,10 @@ export default function ServicesPage() {
       }
       setDialogOpen(false);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Erro ao salvar serviço';
-      toast.error(msg);
+      // Extract human-readable message from Axios error or fallback
+      const axiosMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const msg = axiosMsg ?? (err instanceof Error ? err.message : 'Erro ao salvar serviço');
+      toast.error(String(msg));
     }
   }
 
@@ -478,6 +480,12 @@ export default function ServicesPage() {
                   />
                 </div>
               )}
+              {Object.keys(form.formState.errors).length > 0 && (
+                <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  Corrija os campos: {Object.keys(form.formState.errors).join(', ')}
+                </div>
+              )}
+
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                   Cancelar
