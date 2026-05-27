@@ -128,10 +128,19 @@ export class ScheduleEngineService {
           where: { companyId, collaboratorId: { in: collaboratorIds }, dayOfWeek, isOpen: true },
         });
       }
-      if (!bh) return [];
-      openTime = specialDay?.openTime ?? bh.openTime;
-      closeTime = specialDay?.closeTime ?? bh.closeTime;
-      slotDurationMin = bh.slotDurationMin;
+      if (!bh) {
+        // No business hours configured at all — use sensible default (Mon–Sat 09:00–19:00)
+        const dayIndex = localDate.getDay(); // 0=Sun
+        if (dayIndex === 0) return []; // Sunday closed by default
+        openTime = '09:00';
+        closeTime = '19:00';
+        slotDurationMin = 30;
+        this.logger.warn(`No business hours for company ${companyId} on ${dayOfWeek} — using default 09:00–19:00`);
+      } else {
+        openTime = specialDay?.openTime ?? bh.openTime;
+        closeTime = specialDay?.closeTime ?? bh.closeTime;
+        slotDurationMin = bh.slotDurationMin;
+      }
     }
 
     if (!openTime || !closeTime) return [];
