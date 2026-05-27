@@ -68,4 +68,9 @@ export class CreateCollaboratorDto {
   @IsOptional()
   @IsBoolean()
   canFinishService?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  hideFromBot?: boolean;
 }

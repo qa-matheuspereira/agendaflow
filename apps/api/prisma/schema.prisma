@@ -190,6 +190,7 @@ model Collaborator {
   canCreateBreak    Boolean  @default(true)
   canCallNextQueue  Boolean  @default(true)
   canFinishService  Boolean  @default(true)
+  hideFromBot       Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -316,6 +317,8 @@ model Service {
   advancePaymentType     String?
   advancePaymentValue    Decimal? @db.Decimal(10, 2)
   isActive               Boolean  @default(true)
+  schedulingMode         String   @default("SCHEDULE")
+  autoDistribute         Boolean  @default(false)
   maxDailyAppointments   Int?
   order                  Int      @default(0)
   createdAt              DateTime @default(now())

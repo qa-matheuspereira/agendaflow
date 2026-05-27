@@ -23,6 +23,7 @@ interface BookingContext {
   selectedCollaboratorId?: string;
   services?: string[];
   selectedServiceId?: string;
+  serviceMode?: 'SCHEDULE' | 'QUEUE';
   dates?: string[];       // available dates YYYY-MM-DD list shown to user
   selectedDate?: string;
   slots?: string[];
@@ -324,79 +325,41 @@ export class WhatsappClientBotService {
     rawNumber: string,
     companyId: string,
   ): Promise<void> {
-    const cfg = await this.prisma.whatsappConfig.findUnique({
-      where: { companyId },
-      select: { skipCollaboratorSelection: true, allowMultipleServices: true },
-    });
-    const skipCollab = cfg?.skipCollaboratorSelection ?? false;
-    const multiService = cfg?.allowMultipleServices ?? false;
-
-    const collaborators = await this.prisma.collaborator.findMany({
+    const services = await this.prisma.service.findMany({
       where: { companyId, isActive: true },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' },
+      select: { id: true, name: true, durationMinutes: true, price: true, schedulingMode: true },
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
     });
 
-    if (collaborators.length === 0) {
-      // Sem colaboradores: vai direto para serviços OU oferece fila
+    if (services.length === 0) {
       const withQueue = await this.queueEnabled(companyId);
-      const services = await this.prisma.service.findMany({
-        where: { companyId, isActive: true },
-        select: { id: true, name: true, durationMinutes: true, price: true },
-        orderBy: { name: 'asc' },
-      });
-
-      if (services.length === 0) {
-        if (withQueue) {
-          await this.whatsapp.sendText(
-            instanceName,
-            rawNumber,
-            'Nenhum profissional disponível para agendamento no momento.\n\nMas você pode entrar na fila de espera e ser chamado quando houver disponibilidade!\n\n1 - Entrar na fila\n0 - Voltar ao menu',
-          );
-          await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
-        } else {
-          await this.whatsapp.sendText(
-            instanceName,
-            rawNumber,
-            'Nenhum profissional disponível no momento. Entre em contato com o estabelecimento.',
-          );
-          await this.setState(companyId, rawNumber, 'MAIN_MENU');
-        }
-        return;
-      }
-
-      // Tem serviços, sem colaborador — pula direto pra seleção de serviço
-      await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, null);
-      return;
-    }
-
-    // Tem colaboradores mas skipCollaboratorSelection ativo — pula seleção de profissional
-    if (skipCollab) {
-      const services = await this.prisma.service.findMany({
-        where: { companyId, isActive: true },
-        select: { id: true, name: true, durationMinutes: true, price: true },
-        orderBy: { name: 'asc' },
-      });
-
-      if (services.length === 0) {
+      if (withQueue) {
+        await this.whatsapp.sendText(
+          instanceName,
+          rawNumber,
+          'Nenhum serviço disponível no momento.\n\nMas você pode entrar na fila de espera!\n\n1 - Entrar na fila\n0 - Voltar ao menu',
+        );
+        await this.setState(companyId, rawNumber, 'NO_COLLABORATOR_QUEUE_OFFER');
+      } else {
         await this.whatsapp.sendText(instanceName, rawNumber, 'Nenhum serviço disponível no momento.');
         await this.setState(companyId, rawNumber, 'MAIN_MENU');
-        return;
       }
-
-      await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, null);
       return;
     }
 
-    // Fluxo normal: escolher profissional
-    const lines = ['*Escolha o profissional:*', ''];
-    collaborators.forEach((c, i) => lines.push(`${i + 1} - ${c.name}`));
+    const lines = ['*Escolha o serviço:*', ''];
+    services.forEach((s, i) => {
+      const modeIcon = s.schedulingMode === 'QUEUE' ? '🕐' : '📅';
+      const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      lines.push(`${i + 1} - ${modeIcon} ${s.name} • ${s.durationMinutes} min • ${price}`);
+    });
     lines.push('', '0 - Voltar ao menu');
-    lines.push('', 'Digite o número do profissional desejado.');
-    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    lines.push('', '📅 Agendamento  🕐 Fila de espera');
+    lines.push('', 'Digite o número do serviço desejado.');
 
-    await this.setState(companyId, rawNumber, 'SELECT_COLLABORATOR', {
-      collaborators: collaborators.map((c) => c.id),
+    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    await this.setState(companyId, rawNumber, 'SELECT_SERVICE', {
+      services: services.map((s) => s.id),
     } as BookingContext);
   }
 
@@ -444,53 +407,32 @@ export class WhatsappClientBotService {
     const trimmed = text.trim();
 
     if (trimmed === '0') {
-      await this.showMainMenu(instanceName, rawNumber, companyId);
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
       return;
     }
 
-    const idx = parseInt(trimmed, 10) - 1;
+    const semPreferenciaIdx = collaborators.length + 1;
+    const parsed = parseInt(trimmed, 10);
 
+    if (parsed === semPreferenciaIdx) {
+      const leastLoaded = await this.leastLoadedCollaborator(companyId, ctx.selectedServiceId ?? null);
+      if (!leastLoaded) {
+        await this.whatsapp.sendText(instanceName, rawNumber, 'Nenhum profissional disponível no momento. Entre em contato com o estabelecimento.');
+        await this.setState(companyId, rawNumber, 'MAIN_MENU');
+        return;
+      }
+      await this.showAvailableDates(instanceName, rawNumber, companyId, { ...ctx, selectedCollaboratorId: leastLoaded });
+      return;
+    }
+
+    const idx = parsed - 1;
     if (isNaN(idx) || idx < 0 || idx >= collaborators.length) {
       await this.startBookingFlow(instanceName, rawNumber, companyId);
       return;
     }
 
     const selectedCollaboratorId = collaborators[idx];
-
-    const services = await this.prisma.service.findMany({
-      where: {
-        companyId,
-        isActive: true,
-        collaborators: { some: { collaboratorId: selectedCollaboratorId } },
-      },
-      select: { id: true, name: true, durationMinutes: true, price: true },
-      orderBy: { name: 'asc' },
-    });
-
-    if (services.length === 0) {
-      await this.whatsapp.sendText(
-        instanceName,
-        rawNumber,
-        'Nenhum serviço disponível para este profissional. Escolha outro:',
-      );
-      await this.startBookingFlow(instanceName, rawNumber, companyId);
-      return;
-    }
-
-    const cfg = await this.prisma.whatsappConfig.findUnique({
-      where: { companyId },
-      select: { allowMultipleServices: true },
-    });
-    const multiService = cfg?.allowMultipleServices ?? false;
-
-    await this.showServiceMenu(instanceName, rawNumber, services, multiService, companyId, selectedCollaboratorId);
-
-    // update context to include collaborators list for back-navigation
-    const stateKey = rawNumber.split('@')[0];
-    await this.prisma.conversationState.update({
-      where: { companyId_whatsappNumber: { companyId, whatsappNumber: stateKey } },
-      data: { context: { collaborators, selectedCollaboratorId, services: services.map((s) => s.id) } },
-    });
+    await this.showAvailableDates(instanceName, rawNumber, companyId, { ...ctx, selectedCollaboratorId });
   }
 
   private async handleServiceSelection(
@@ -504,7 +446,7 @@ export class WhatsappClientBotService {
     const trimmed = text.trim();
 
     if (trimmed === '0') {
-      await this.startBookingFlow(instanceName, rawNumber, companyId);
+      await this.showMainMenu(instanceName, rawNumber, companyId);
       return;
     }
 
@@ -514,63 +456,82 @@ export class WhatsappClientBotService {
     });
     const multiService = cfg?.allowMultipleServices ?? false;
 
-    // Multi-service: parse "1,3" or "1, 3" → índices
+    // Multi-service: parse "1,3"
     if (multiService && trimmed.includes(',')) {
       const parts = trimmed.split(',').map((p) => parseInt(p.trim(), 10) - 1);
       const validIdxs = parts.filter((i) => !isNaN(i) && i >= 0 && i < services.length);
-
       if (validIdxs.length === 0) {
-        await this.whatsapp.sendText(instanceName, rawNumber, 'Opção inválida. Tente novamente enviando os números separados por vírgula (ex: 1,3).');
+        await this.whatsapp.sendText(instanceName, rawNumber, 'Opção inválida. Envie os números separados por vírgula (ex: 1,3).');
         return;
       }
-
       const selectedServiceIds = validIdxs.map((i) => services[i]);
-      // Para agendamento usa o primeiro serviço; os demais ficam salvos no contexto
-      const selectedServiceId = selectedServiceIds[0];
-
+      const primaryServiceId = selectedServiceIds[0];
       const svcNames = await this.prisma.service.findMany({
         where: { id: { in: selectedServiceIds } },
         select: { name: true },
       });
       const nameList = svcNames.map((s) => `• ${s.name}`).join('\n');
-      await this.whatsapp.sendText(
-        instanceName,
-        rawNumber,
-        `✅ Serviços selecionados:\n${nameList}\n\nBuscando datas disponíveis...`,
-      );
-
+      await this.whatsapp.sendText(instanceName, rawNumber, `✅ Serviços selecionados:\n${nameList}\n\nBuscando datas disponíveis...`);
       await this.showAvailableDates(instanceName, rawNumber, companyId, {
         ...ctx,
-        selectedServiceId,
-        appointmentIds: selectedServiceIds, // reutilizamos appointmentIds para armazenar IDs dos serviços extras
+        selectedServiceId: primaryServiceId,
+        appointmentIds: selectedServiceIds,
+        serviceMode: 'SCHEDULE',
       } as BookingContext);
       return;
     }
 
-    // Single service selection
     const idx = parseInt(trimmed, 10) - 1;
-
     if (isNaN(idx) || idx < 0 || idx >= services.length) {
-      const svcRecords = await this.prisma.service.findMany({
-        where: { companyId, id: { in: services }, isActive: true },
-        select: { id: true, name: true, durationMinutes: true, price: true },
-        orderBy: { name: 'asc' },
-      });
-      const lines = multiService
-        ? ['*Escolha os serviços desejados:*', '', 'Digite os números separados por vírgula (ex: 1,3):', '']
-        : ['*Escolha o serviço:*', ''];
-      svcRecords.forEach((s, i) => {
-        const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-        lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
-      });
-      lines.push('', '0 - Voltar ao menu');
-      lines.push('', 'Opção inválida. Tente novamente.');
-      await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
       return;
     }
 
     const selectedServiceId = services[idx];
-    await this.showAvailableDates(instanceName, rawNumber, companyId, { ...ctx, selectedServiceId } as BookingContext);
+    const service = await this.prisma.service.findUnique({
+      where: { id: selectedServiceId },
+      select: { schedulingMode: true, autoDistribute: true },
+    });
+    if (!service) {
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
+      return;
+    }
+
+    const serviceMode = service.schedulingMode as 'SCHEDULE' | 'QUEUE';
+
+    if (serviceMode === 'QUEUE') {
+      await this.joinQueueForService(instanceName, rawNumber, companyId, selectedServiceId, null);
+      return;
+    }
+
+    // SCHEDULE mode: resolve collaborator via cascade logic
+    const resolution = await this.resolveCollaboratorForService(companyId, selectedServiceId, service.autoDistribute);
+
+    if (!resolution.needsSelection) {
+      await this.showAvailableDates(instanceName, rawNumber, companyId, {
+        ...ctx,
+        selectedServiceId,
+        serviceMode,
+        selectedCollaboratorId: resolution.collaboratorId ?? undefined,
+      } as BookingContext);
+      return;
+    }
+
+    // Show collaborator list with "Sem preferência"
+    const visibleCollabs = resolution.collaborators!;
+    const lines = ['*Escolha o profissional:*', ''];
+    visibleCollabs.forEach((c, i) => lines.push(`${i + 1} - ${c.name}`));
+    lines.push(`${visibleCollabs.length + 1} - Sem preferência`);
+    lines.push('', '0 - Voltar');
+    lines.push('', 'Digite o número do profissional desejado.');
+    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+
+    await this.setState(companyId, rawNumber, 'SELECT_COLLABORATOR', {
+      ...ctx,
+      selectedServiceId,
+      serviceMode,
+      collaborators: visibleCollabs.map((c) => c.id),
+    } as BookingContext);
   }
 
   private async showAvailableDates(
@@ -647,24 +608,7 @@ export class WhatsappClientBotService {
     const trimmed = text.trim();
 
     if (trimmed === '0') {
-      const svcRecords = await this.prisma.service.findMany({
-        where: { companyId, id: { in: ctx.services ?? [] }, isActive: true },
-        select: { id: true, name: true, durationMinutes: true, price: true },
-        orderBy: { name: 'asc' },
-      });
-      const lines = ['*Escolha o serviço:*', ''];
-      svcRecords.forEach((s, i) => {
-        const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-        lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
-      });
-      lines.push('', '0 - Voltar ao profissional');
-      lines.push('', 'Digite o número do serviço desejado.');
-      await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
-      await this.setState(companyId, rawNumber, 'SELECT_SERVICE', {
-        collaborators: ctx.collaborators,
-        selectedCollaboratorId: ctx.selectedCollaboratorId,
-        services: ctx.services,
-      } as BookingContext);
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
       return;
     }
 
@@ -750,15 +694,11 @@ export class WhatsappClientBotService {
       resolvedClientId = newClient.id;
     }
 
-    // Resolve collaboratorId — pode ser null quando skipCollaboratorSelection está ativo
+    // Resolve collaboratorId — uses least-load if no collaborator was selected
     let resolvedCollaboratorId = ctx.selectedCollaboratorId ?? null;
     if (!resolvedCollaboratorId) {
-      const fallback = await this.prisma.collaborator.findFirst({
-        where: { companyId, isActive: true },
-        select: { id: true },
-        orderBy: { name: 'asc' },
-      });
-      if (!fallback) {
+      resolvedCollaboratorId = await this.leastLoadedCollaborator(companyId, ctx.selectedServiceId ?? null);
+      if (!resolvedCollaboratorId) {
         await this.whatsapp.sendText(
           instanceName,
           rawNumber,
@@ -767,7 +707,6 @@ export class WhatsappClientBotService {
         await this.setState(companyId, rawNumber, 'MAIN_MENU');
         return;
       }
-      resolvedCollaboratorId = fallback.id;
     }
 
     const [service, collaborator] = await Promise.all([
@@ -917,14 +856,84 @@ export class WhatsappClientBotService {
     }
 
     const idx = parseInt(trimmed, 10) - 1;
-
     if (isNaN(idx) || idx < 0 || idx >= services.length) {
       await this.startQueueFlow(instanceName, rawNumber, companyId);
       return;
     }
 
-    const selectedServiceId = services[idx];
+    await this.joinQueueForService(instanceName, rawNumber, companyId, services[idx], clientId);
+  }
 
+  // ─── Private helpers ──────────────────────────────────────────────────────
+
+  private async leastLoadedCollaborator(companyId: string, serviceId: string | null): Promise<string | null> {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const dateStart = new Date(todayStr + 'T00:00:00.000Z');
+    const dateEnd = new Date(dateStart.getTime() + 86400000);
+
+    const collabs = await this.prisma.collaborator.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        ...(serviceId ? { services: { some: { serviceId } } } : {}),
+      },
+      select: {
+        id: true,
+        appointments: {
+          where: {
+            scheduledDate: { gte: dateStart, lt: dateEnd },
+            status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW] },
+          },
+          select: { id: true },
+        },
+      },
+    });
+
+    if (collabs.length === 0) return null;
+    collabs.sort((a, b) => a.appointments.length - b.appointments.length);
+    return collabs[0].id;
+  }
+
+  private async resolveCollaboratorForService(
+    companyId: string,
+    serviceId: string,
+    autoDistribute: boolean,
+  ): Promise<{ collaboratorId: string | null; needsSelection: boolean; collaborators?: { id: string; name: string }[] }> {
+    const allCollabs = await this.prisma.collaborator.findMany({
+      where: { companyId, isActive: true, services: { some: { serviceId } } },
+      select: { id: true, name: true, hideFromBot: true },
+      orderBy: { name: 'asc' },
+    });
+
+    if (allCollabs.length === 0) {
+      return { collaboratorId: await this.leastLoadedCollaborator(companyId, null), needsSelection: false };
+    }
+
+    if (autoDistribute) {
+      return { collaboratorId: await this.leastLoadedCollaborator(companyId, serviceId), needsSelection: false };
+    }
+
+    const visibleCollabs = allCollabs.filter((c) => !c.hideFromBot);
+
+    if (visibleCollabs.length === 0) {
+      return { collaboratorId: await this.leastLoadedCollaborator(companyId, serviceId), needsSelection: false };
+    }
+
+    if (visibleCollabs.length === 1) {
+      return { collaboratorId: visibleCollabs[0].id, needsSelection: false };
+    }
+
+    return { collaboratorId: null, needsSelection: true, collaborators: visibleCollabs };
+  }
+
+  private async joinQueueForService(
+    instanceName: string,
+    rawNumber: string,
+    companyId: string,
+    serviceId: string,
+    clientId: string | null,
+  ): Promise<void> {
     let resolvedClientId = clientId;
     if (!resolvedClientId) {
       const newClient = await this.prisma.client.upsert({
@@ -949,39 +958,29 @@ export class WhatsappClientBotService {
 
     if (existing) {
       const waitingAhead = await this.prisma.queueEntry.count({
-        where: {
-          companyId,
-          status: QueueStatus.WAITING,
-          position: { lt: existing.position },
-          joinedAt: { gte: today },
-        },
+        where: { companyId, status: QueueStatus.WAITING, position: { lt: existing.position }, joinedAt: { gte: today } },
       });
       await this.whatsapp.sendText(
         instanceName,
         rawNumber,
-        [
-          'Você já está na fila!',
-          `*Posição:* ${existing.position}`,
-          `*Pessoas à sua frente:* ${waitingAhead}`,
-          `*Tempo estimado:* ~${waitingAhead * 30} minutos`,
-        ].join('\n'),
+        ['Você já está na fila!', `*Posição:* ${existing.position}`, `*Pessoas à sua frente:* ${waitingAhead}`, `*Tempo estimado:* ~${waitingAhead * 30} minutos`].join('\n'),
       );
       await this.setState(companyId, rawNumber, 'MAIN_MENU');
       return;
     }
 
     const service = await this.prisma.service.findUnique({
-      where: { id: selectedServiceId },
-      select: { name: true, durationMinutes: true },
+      where: { id: serviceId },
+      select: { name: true, durationMinutes: true, autoDistribute: true },
     });
+
+    const collaboratorId = service?.autoDistribute
+      ? await this.leastLoadedCollaborator(companyId, serviceId)
+      : null;
 
     const createdEntry = await this.prisma.$transaction(async (tx) => {
       const maxResult = await tx.queueEntry.aggregate({
-        where: {
-          companyId,
-          status: { in: [QueueStatus.WAITING, QueueStatus.CALLED, QueueStatus.IN_SERVICE] },
-          joinedAt: { gte: today },
-        },
+        where: { companyId, status: { in: [QueueStatus.WAITING, QueueStatus.CALLED, QueueStatus.IN_SERVICE] }, joinedAt: { gte: today } },
         _max: { position: true },
       });
       const nextPosition = (maxResult._max.position ?? 0) + 1;
@@ -989,7 +988,8 @@ export class WhatsappClientBotService {
         data: {
           companyId,
           clientId: resolvedClientId,
-          serviceId: selectedServiceId,
+          serviceId,
+          collaboratorId: collaboratorId ?? undefined,
           priority: QueuePriority.NORMAL,
           position: nextPosition,
           createdViaBot: true,
@@ -998,30 +998,15 @@ export class WhatsappClientBotService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     const nextPosition = createdEntry.position;
-
     const waitingAhead = await this.prisma.queueEntry.count({
-      where: {
-        companyId,
-        status: QueueStatus.WAITING,
-        position: { lt: nextPosition },
-        joinedAt: { gte: today },
-      },
+      where: { companyId, status: QueueStatus.WAITING, position: { lt: nextPosition }, joinedAt: { gte: today } },
     });
 
     const avgDuration = service?.durationMinutes ?? 30;
     await this.whatsapp.sendText(
       instanceName,
       rawNumber,
-      [
-        '✅ *Você entrou na fila!*',
-        '',
-        `💈 Serviço: ${service?.name ?? ''}`,
-        `*Posição:* ${nextPosition}`,
-        `*Pessoas à sua frente:* ${waitingAhead}`,
-        `*Tempo estimado:* ~${waitingAhead * avgDuration} minutos`,
-        '',
-        'Aguarde ser chamado.',
-      ].join('\n'),
+      ['✅ *Você entrou na fila!*', '', `💈 Serviço: ${service?.name ?? ''}`, `*Posição:* ${nextPosition}`, `*Pessoas à sua frente:* ${waitingAhead}`, `*Tempo estimado:* ~${waitingAhead * avgDuration} minutos`, '', 'Aguarde ser chamado.'].join('\n'),
     );
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }

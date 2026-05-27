@@ -31,6 +31,7 @@ export const createCollaboratorSchema = z.object({
   email: z.string().email('Email inválido').optional().or(z.literal('')),
   bio: z.string().optional().or(z.literal('')),
   serviceIds: z.array(z.string()).optional(),
+  hideFromBot: z.boolean().optional(),
 });
 export type CreateCollaboratorFormData = z.infer<typeof createCollaboratorSchema>;
 
@@ -52,6 +53,8 @@ export const createServiceSchema = z.object({
   advancePaymentValue: z.coerce.number().min(0).optional(),
   maxDailyAppointments: z.coerce.number().min(1).optional(),
   order: z.coerce.number().min(0).optional(),
+  schedulingMode: z.enum(['SCHEDULE', 'QUEUE']).optional(),
+  autoDistribute: z.boolean().optional(),
 });
 export type CreateServiceFormData = z.infer<typeof createServiceSchema>;
 

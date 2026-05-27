@@ -49,12 +49,12 @@ export default function CollaboratorsPage() {
 
   const form = useForm<CreateCollaboratorFormData>({
     resolver: zodResolver(createCollaboratorSchema),
-    defaultValues: { name: '', whatsappNumber: '', email: '', bio: '', serviceIds: [] },
+    defaultValues: { name: '', whatsappNumber: '', email: '', bio: '', serviceIds: [], hideFromBot: false },
   });
 
   function openCreate() {
     setEditingCollab(null);
-    form.reset({ name: '', whatsappNumber: '', email: '', bio: '', serviceIds: [] });
+    form.reset({ name: '', whatsappNumber: '', email: '', bio: '', serviceIds: [], hideFromBot: false });
     setDialogOpen(true);
   }
 
@@ -67,6 +67,7 @@ export default function CollaboratorsPage() {
       email: collab.email ?? '',
       bio: collab.bio ?? '',
       serviceIds: collab.services?.map((s) => s.id) ?? [],
+      hideFromBot: collab.hideFromBot ?? false,
     });
     setDialogOpen(true);
   }
@@ -335,6 +336,27 @@ export default function CollaboratorsPage() {
                       )}
                     </div>
                   </div>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="hideFromBot"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-3 space-y-0 rounded-md border p-3">
+                    <FormControl>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300"
+                        checked={field.value ?? false}
+                        onChange={(e) => field.onChange(e.target.checked)}
+                      />
+                    </FormControl>
+                    <div>
+                      <FormLabel className="font-normal cursor-pointer">Ocultar no bot (distribuição automática)</FormLabel>
+                      <p className="text-xs text-muted-foreground">Não aparece na lista do WhatsApp, mas pode receber agendamentos via distribuição automática</p>
+                    </div>
+                  </FormItem>
                 )}
               />
 

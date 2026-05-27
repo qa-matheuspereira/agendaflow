@@ -64,6 +64,8 @@ export class ServicesService {
         advancePaymentValue: dto.advancePaymentValue ?? null,
         maxDailyAppointments: dto.maxDailyAppointments,
         order: dto.order ?? 0,
+        schedulingMode: dto.schedulingMode ?? 'SCHEDULE',
+        autoDistribute: dto.autoDistribute ?? false,
         isActive: true,
       },
       include: { category: true },
@@ -145,6 +147,8 @@ export class ServicesService {
         advancePaymentValue: dto.advancePaymentValue,
         maxDailyAppointments: dto.maxDailyAppointments,
         order: dto.order,
+        schedulingMode: dto.schedulingMode,
+        autoDistribute: dto.autoDistribute,
       },
       include: { category: true },
     });

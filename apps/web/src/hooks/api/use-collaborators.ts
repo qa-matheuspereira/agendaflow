@@ -10,6 +10,7 @@ export interface Collaborator {
   email?: string;
   bio?: string;
   isActive: boolean;
+  hideFromBot: boolean;
   services?: { id: string; name: string }[];
   createdAt: string;
   updatedAt: string;
@@ -48,6 +49,7 @@ export function useCreateCollaborator() {
       email?: string;
       bio?: string;
       serviceIds?: string[];
+      hideFromBot?: boolean;
     }) => api.post<Collaborator>('/collaborators', data).then((res) => res.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['collaborators'] });
@@ -66,6 +68,7 @@ export function useUpdateCollaborator() {
       email?: string;
       bio?: string;
       serviceIds?: string[];
+      hideFromBot?: boolean;
     }) => api.put<Collaborator>(`/collaborators/${id}`, data).then((res) => res.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['collaborators'] });

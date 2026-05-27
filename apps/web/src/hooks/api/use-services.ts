@@ -18,6 +18,8 @@ export interface Service {
   advancePaymentValue?: number;
   maxDailyAppointments?: number;
   isActive: boolean;
+  schedulingMode: 'SCHEDULE' | 'QUEUE';
+  autoDistribute: boolean;
   order: number;
   createdAt: string;
   updatedAt: string;
@@ -79,6 +81,8 @@ export function useCreateService() {
       advancePaymentValue?: number;
       maxDailyAppointments?: number;
       order?: number;
+      schedulingMode?: 'SCHEDULE' | 'QUEUE';
+      autoDistribute?: boolean;
     }) => api.post<Service>('/services', data).then((res) => res.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['services'] });
@@ -103,6 +107,8 @@ export function useUpdateService() {
       advancePaymentValue: number;
       maxDailyAppointments: number;
       order: number;
+      schedulingMode: 'SCHEDULE' | 'QUEUE';
+      autoDistribute: boolean;
     }>) => api.put<Service>(`/services/${id}`, data).then((res) => res.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['services'] });

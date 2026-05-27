@@ -79,4 +79,14 @@ export class CreateServiceDto {
   @Min(0)
   @Type(() => Number)
   order?: number;
+
+  @ApiPropertyOptional({ enum: ['SCHEDULE', 'QUEUE'], default: 'SCHEDULE' })
+  @IsOptional()
+  @IsEnum(['SCHEDULE', 'QUEUE'])
+  schedulingMode?: 'SCHEDULE' | 'QUEUE';
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  autoDistribute?: boolean;
 }

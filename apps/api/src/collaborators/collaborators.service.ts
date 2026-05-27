@@ -48,6 +48,7 @@ export class CollaboratorsService {
         canCreateBreak: dto.canCreateBreak ?? true,
         canCallNextQueue: dto.canCallNextQueue ?? true,
         canFinishService: dto.canFinishService ?? true,
+        hideFromBot: dto.hideFromBot ?? false,
         services: dto.serviceIds?.length
           ? { create: dto.serviceIds.map((sid) => ({ serviceId: sid })) }
           : undefined,
@@ -156,6 +157,7 @@ export class CollaboratorsService {
           canCreateBreak: dto.canCreateBreak,
           canCallNextQueue: dto.canCallNextQueue,
           canFinishService: dto.canFinishService,
+          hideFromBot: dto.hideFromBot,
         },
         include: { services: { include: { service: true } } },
       });

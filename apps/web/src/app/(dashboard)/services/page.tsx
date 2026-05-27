@@ -52,6 +52,7 @@ export default function ServicesPage() {
     defaultValues: {
       name: '', description: '', durationMinutes: 30, breakAfterMinutes: 0,
       price: 0, requiresDocument: false, requiresAdvancePayment: false, order: 0,
+      schedulingMode: 'SCHEDULE', autoDistribute: false,
     },
   });
 
@@ -60,6 +61,7 @@ export default function ServicesPage() {
     form.reset({
       name: '', description: '', durationMinutes: 30, breakAfterMinutes: 0,
       price: 0, requiresDocument: false, requiresAdvancePayment: false, order: 0,
+      schedulingMode: 'SCHEDULE', autoDistribute: false,
     });
     setDialogOpen(true);
   }
@@ -80,6 +82,8 @@ export default function ServicesPage() {
       advancePaymentValue: svc.advancePaymentValue,
       maxDailyAppointments: svc.maxDailyAppointments,
       order: svc.order,
+      schedulingMode: svc.schedulingMode ?? 'SCHEDULE',
+      autoDistribute: svc.autoDistribute ?? false,
     });
     setDialogOpen(true);
   }
@@ -130,6 +134,7 @@ export default function ServicesPage() {
   const isBusy = createMutation.isPending || updateMutation.isPending;
   const requiresDocumentVal = form.watch('requiresDocument');
   const requiresAdvancePaymentVal = form.watch('requiresAdvancePayment');
+  const schedulingModeVal = form.watch('schedulingMode');
 
   return (
     <div className="space-y-4">
@@ -158,6 +163,7 @@ export default function ServicesPage() {
               <TableHead className="text-right">
                 <div className="flex items-center justify-end gap-1"><DollarSign className="h-3.5 w-3.5" /> Preço</div>
               </TableHead>
+              <TableHead className="text-center">Modo</TableHead>
               <TableHead className="text-center">Status</TableHead>
               <TableHead className="w-[50px]" />
             </TableRow>
@@ -165,13 +171,13 @@ export default function ServicesPage() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
+                <TableCell colSpan={7} className="h-32 text-center">
                   <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
                 </TableCell>
               </TableRow>
             ) : services.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
                   Nenhum serviço cadastrado
                 </TableCell>
               </TableRow>
@@ -184,6 +190,13 @@ export default function ServicesPage() {
                   </TableCell>
                   <TableCell className="text-center">{svc.durationMinutes} min</TableCell>
                   <TableCell className="text-right">{formatCurrency(svc.price)}</TableCell>
+                  <TableCell className="text-center">
+                    {svc.schedulingMode === 'QUEUE' ? (
+                      <Badge variant="outline">🕐 Fila</Badge>
+                    ) : (
+                      <Badge variant="secondary">📅 Agend.</Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-center">
                     {svc.isActive ? (
                       <Badge variant="secondary">Ativo</Badge>
@@ -316,6 +329,51 @@ export default function ServicesPage() {
                   </FormItem>
                 )}
               />
+
+              <Separator />
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Modo de atendimento</p>
+
+              <FormField
+                control={form.control}
+                name="schedulingMode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Tipo de atendimento</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value ?? 'SCHEDULE'}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="SCHEDULE">📅 Agendamento (data e hora)</SelectItem>
+                        <SelectItem value="QUEUE">🕐 Fila de espera</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {schedulingModeVal === 'SCHEDULE' && (
+                <FormField
+                  control={form.control}
+                  name="autoDistribute"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-3 space-y-0">
+                      <FormControl>
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300"
+                          checked={field.value ?? false}
+                          onChange={(e) => field.onChange(e.target.checked)}
+                        />
+                      </FormControl>
+                      <FormLabel className="font-normal cursor-pointer">Distribuir automaticamente entre profissionais (menos carregado)</FormLabel>
+                    </FormItem>
+                  )}
+                />
+              )}
 
               <Separator />
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Requisitos e pagamento antecipado</p>
