@@ -180,7 +180,7 @@ export class WhatsappClientBotService {
     await this.whatsapp.sendText(
       instanceName,
       rawNumber,
-      `Olá, *${client.name}*! 👋\n\n${menu}`,
+      `Olá, *${client.name}*!\n\n${menu}`,
     );
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }
@@ -210,7 +210,7 @@ export class WhatsappClientBotService {
     await this.whatsapp.sendText(
       instanceName,
       rawNumber,
-      `${greeting}\n\nOlá, *${client.name}*! 👋\n\n${menu}`,
+      `${greeting}\n\nOlá, *${client.name}*!\n\n${menu}`,
     );
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }
@@ -349,9 +349,9 @@ export class WhatsappClientBotService {
 
     const lines = ['*Escolha o serviço:*', ''];
     services.forEach((s, i) => {
-      const modeIcon = s.schedulingMode === 'QUEUE' ? '🕐' : '📅';
+      const modeLabel = s.schedulingMode === 'QUEUE' ? ' [Fila]' : '';
       const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-      lines.push(`${i + 1} - ${modeIcon} ${s.name} • ${s.durationMinutes} min • ${price}`);
+      lines.push(`${i + 1} - ${s.name}${modeLabel} • ${s.durationMinutes} min • ${price}`);
     });
     lines.push('', '0 - Voltar ao menu');
     lines.push('', 'Digite o número do serviço desejado.');
@@ -470,7 +470,7 @@ export class WhatsappClientBotService {
         select: { name: true },
       });
       const nameList = svcNames.map((s) => `• ${s.name}`).join('\n');
-      await this.whatsapp.sendText(instanceName, rawNumber, `✅ Serviços selecionados:\n${nameList}\n\nBuscando datas disponíveis...`);
+      await this.whatsapp.sendText(instanceName, rawNumber, `Servicos selecionados:\n${nameList}\n\nBuscando datas disponíveis...`);
       await this.showAvailableDates(instanceName, rawNumber, companyId, {
         ...ctx,
         selectedServiceId: primaryServiceId,
@@ -507,11 +507,13 @@ export class WhatsappClientBotService {
     const resolution = await this.resolveCollaboratorForService(companyId, selectedServiceId, service.autoDistribute);
 
     if (!resolution.needsSelection) {
+      // Pass null collaborator to engine so it searches all available slots.
+      // The specific collaborator (autoDistribute or only-visible) is resolved at slot selection time.
       await this.showAvailableDates(instanceName, rawNumber, companyId, {
         ...ctx,
         selectedServiceId,
         serviceMode,
-        selectedCollaboratorId: resolution.collaboratorId ?? undefined,
+        selectedCollaboratorId: undefined,
       } as BookingContext);
       return;
     }
@@ -544,7 +546,7 @@ export class WhatsappClientBotService {
     const endDate = new Date(now);
     endDate.setDate(endDate.getDate() + 6); // next 7 days (today + 6)
 
-    await this.whatsapp.sendText(instanceName, rawNumber, '⏳ Buscando datas disponíveis...');
+    await this.whatsapp.sendText(instanceName, rawNumber, 'Buscando datas disponíveis...');
 
     const dates = await this.scheduleEngine.getAvailableDatesInRange(
       companyId,
@@ -779,12 +781,12 @@ export class WhatsappClientBotService {
     } else {
       this.logger.debug(`[SlotSelection] No custom template found, using default message`);
       confirmation = [
-        '✅ *Agendamento confirmado!*',
+        '*Agendamento confirmado!*',
         '',
-        `📅 Data: ${dateFormatted}`,
-        `🕐 Horário: ${selectedTime}`,
-        `💈 Serviço: ${serviceName}`,
-        `👤 Profissional: ${collabName}`,
+        `Data: ${dateFormatted}`,
+        `Horario: ${selectedTime}`,
+        `Servico: ${serviceName}`,
+        `Profissional: ${collabName}`,
         '',
         'Envie qualquer mensagem para acessar o menu.',
       ].join('\n');
@@ -1006,7 +1008,7 @@ export class WhatsappClientBotService {
     await this.whatsapp.sendText(
       instanceName,
       rawNumber,
-      ['✅ *Você entrou na fila!*', '', `💈 Serviço: ${service?.name ?? ''}`, `*Posição:* ${nextPosition}`, `*Pessoas à sua frente:* ${waitingAhead}`, `*Tempo estimado:* ~${waitingAhead * avgDuration} minutos`, '', 'Aguarde ser chamado.'].join('\n'),
+      ['*Voce entrou na fila!*', '', `Servico: ${service?.name ?? ''}`, `*Posicao:* ${nextPosition}`, `*Pessoas a sua frente:* ${waitingAhead}`, `*Tempo estimado:* ~${waitingAhead * avgDuration} minutos`, '', 'Aguarde ser chamado.'].join('\n'),
     );
     await this.setState(companyId, rawNumber, 'MAIN_MENU');
   }
@@ -1179,10 +1181,10 @@ export class WhatsappClientBotService {
       });
     } else {
       cancellationStr = [
-        '✅ *Agendamento cancelado!*',
+        '*Agendamento cancelado!*',
         '',
-        `📅 ${dateFormatted} às ${appt.scheduledTime}`,
-        `💈 ${appt.service.name} com ${appt.collaborator.name}`,
+        `${dateFormatted} as ${appt.scheduledTime}`,
+        `${appt.service.name} com ${appt.collaborator.name}`,
       ].join('\n');
     }
 
@@ -1229,7 +1231,7 @@ export class WhatsappClientBotService {
     for (const appt of appointments) {
       const date = appt.scheduledDate.toISOString().split('T')[0].split('-').reverse().join('/');
       lines.push(
-        `📅 ${date} às ${appt.scheduledTime}`,
+        `${date} as ${appt.scheduledTime}`,
         `   Serviço: ${appt.service.name}`,
         `   Profissional: ${appt.collaborator.name}`,
         `   Status: ${STATUS_LABEL[appt.status] ?? appt.status}`,

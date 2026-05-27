@@ -105,8 +105,9 @@ export default function ServicesPage() {
         toast.success('Serviço criado!');
       }
       setDialogOpen(false);
-    } catch {
-      toast.error('Erro ao salvar serviço');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao salvar serviço';
+      toast.error(msg);
     }
   }
 
@@ -324,7 +325,18 @@ export default function ServicesPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Máximo de agendamentos/dia</FormLabel>
-                    <FormControl><Input type="number" min={1} placeholder="Sem limite" {...field} /></FormControl>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={1}
+                        placeholder="Sem limite"
+                        value={field.value !== undefined && field.value !== null ? field.value : ''}
+                        onChange={(e) => field.onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
