@@ -349,14 +349,17 @@ export default function ServicesPage() {
                         </>
                       ) : (
                         <>
-                          <Select onValueChange={field.onChange} value={field.value ?? ''}>
+                          <Select
+                            onValueChange={(v) => field.onChange(v === '__none__' ? '' : v)}
+                            value={field.value || '__none__'}
+                          >
                             <FormControl>
                               <SelectTrigger className="flex-1">
                                 <SelectValue placeholder="Sem categoria" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="">Sem categoria</SelectItem>
+                              <SelectItem value="__none__">Sem categoria</SelectItem>
                               {categories.map((cat) => (
                                 <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
                               ))}
