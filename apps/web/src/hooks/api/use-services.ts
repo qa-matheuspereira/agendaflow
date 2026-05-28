@@ -64,6 +64,17 @@ export function useServiceCategories() {
 }
 
 // ─── Mutations ───────────────────────────────────────────────────────────────
+export function useCreateCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; color?: string; icon?: string; order?: number }) =>
+      api.post<ServiceCategory>('/services/categories', data).then((res) => res.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['service-categories'] });
+    },
+  });
+}
+
 export function useCreateService() {
   const qc = useQueryClient();
   return useMutation({

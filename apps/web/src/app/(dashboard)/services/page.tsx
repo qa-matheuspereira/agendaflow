@@ -5,11 +5,12 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import {
-  Plus, MoreHorizontal, Pencil, Trash2, RotateCcw, Loader2, Clock, DollarSign,
+  Plus, MoreHorizontal, Pencil, Trash2, RotateCcw, Loader2, Clock, DollarSign, Check, X,
 } from 'lucide-react';
 
 import {
   useServices, useCreateService, useUpdateService, useDeactivateService, useActivateService,
+  useServiceCategories, useCreateCategory,
 } from '@/hooks/api/use-services';
 import type { Service } from '@/hooks/api/use-services';
 import { createServiceSchema, type CreateServiceFormData } from '@/schemas';
@@ -40,12 +41,16 @@ export default function ServicesPage() {
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   const { data, isLoading } = useServices({ page, limit: 20 });
+  const { data: categories = [] } = useServiceCategories();
   const createMutation = useCreateService();
   const updateMutation = useUpdateService();
   const deactivateMutation = useDeactivateService();
   const activateMutation = useActivateService();
+  const createCategoryMutation = useCreateCategory();
 
   const form = useForm<CreateServiceFormData>({
     resolver: zodResolver(createServiceSchema),
@@ -56,8 +61,23 @@ export default function ServicesPage() {
     },
   });
 
+  async function confirmNewCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    try {
+      const cat = await createCategoryMutation.mutateAsync({ name });
+      form.setValue('categoryId', cat.id);
+      setNewCategoryName('');
+      setCreatingCategory(false);
+    } catch {
+      toast.error('Erro ao criar categoria');
+    }
+  }
+
   function openCreate() {
     setEditingService(null);
+    setCreatingCategory(false);
+    setNewCategoryName('');
     form.reset({
       name: '', description: '', durationMinutes: 30, breakAfterMinutes: 0,
       price: 0, requiresDocument: false, requiresAdvancePayment: false, order: 0,
@@ -67,6 +87,8 @@ export default function ServicesPage() {
   }
 
   function openEdit(svc: Service) {
+    setCreatingCategory(false);
+    setNewCategoryName('');
     setEditingService(svc);
     form.reset({
       name: svc.name,
@@ -282,6 +304,76 @@ export default function ServicesPage() {
                   <FormItem>
                     <FormLabel>Descrição</FormLabel>
                     <FormControl><Textarea placeholder="Descrição do serviço" rows={2} {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="categoryId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Categoria</FormLabel>
+                    <div className="flex gap-2">
+                      {creatingCategory ? (
+                        <>
+                          <FormControl>
+                            <Input
+                              autoFocus
+                              placeholder="Nome da nova categoria"
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); confirmNewCategory(); }
+                                if (e.key === 'Escape') { setCreatingCategory(false); setNewCategoryName(''); }
+                              }}
+                            />
+                          </FormControl>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="default"
+                            disabled={createCategoryMutation.isPending || !newCategoryName.trim()}
+                            onClick={confirmNewCategory}
+                          >
+                            {createCategoryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => { setCreatingCategory(false); setNewCategoryName(''); }}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Select onValueChange={field.onChange} value={field.value ?? ''}>
+                            <FormControl>
+                              <SelectTrigger className="flex-1">
+                                <SelectValue placeholder="Sem categoria" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="">Sem categoria</SelectItem>
+                              {categories.map((cat) => (
+                                <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            title="Criar nova categoria"
+                            onClick={() => setCreatingCategory(true)}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}
