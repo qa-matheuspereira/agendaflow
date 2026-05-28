@@ -118,7 +118,7 @@ export default function AppointmentsPage() {
     dateFrom: format(weekStart, 'yyyy-MM-dd'),
     dateTo: format(weekEnd, 'yyyy-MM-dd'),
     collaboratorId: collabFilter || undefined,
-    limit: 500,
+    limit: 100,
   });
 
   const { data: clientsData } = useClients({ limit: 200 });
