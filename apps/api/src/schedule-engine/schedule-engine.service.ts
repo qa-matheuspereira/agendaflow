@@ -105,8 +105,6 @@ export class ScheduleEngineService {
       return [];
     }
 
-    this.logger.debug(`[slots] ${dateStr}: collaboratorIds=[${collaboratorIds.join(',')}]`);
-
     let openTime: string | undefined;
     let closeTime: string | undefined;
     let slotDurationMin = 30;
@@ -156,8 +154,6 @@ export class ScheduleEngineService {
       return [];
     }
 
-    this.logger.warn(`[slots] ${dateStr}: open=${openTime} close=${closeTime} slot=${slotDurationMin}min collabs=${collaboratorIds.length}`);
-
     const open = timeToMinutes(openTime);
     const close = timeToMinutes(closeTime);
 
@@ -190,8 +186,6 @@ export class ScheduleEngineService {
       );
       free.forEach((s) => availableSet.add(s));
     }
-
-    this.logger.warn(`[slots] ${dateStr}: candidates=${candidateSlots.length} available=${availableSet.size}`);
 
     return candidateSlots.map((slot) => ({
       time: slot,
