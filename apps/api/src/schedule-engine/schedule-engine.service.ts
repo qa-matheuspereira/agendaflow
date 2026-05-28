@@ -275,8 +275,8 @@ export class ScheduleEngineService {
         if (slots.some((s) => s.available)) {
           availableDates.push(dateStr);
         }
-      } catch {
-        // service/collaborator invalid — skip
+      } catch (err) {
+        this.logger.error(`getAvailableSlots error for ${dateStr} service=${serviceId}: ${err}`);
       }
     }
 
@@ -308,8 +308,8 @@ export class ScheduleEngineService {
         if (slots.some((s) => s.available)) {
           availableDates.push(dateStr);
         }
-      } catch {
-        // skip invalid
+      } catch (err) {
+        this.logger.error(`getAvailableSlots error for ${dateStr} service=${serviceId}: ${err}`);
       }
     }
 

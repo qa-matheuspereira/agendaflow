@@ -556,6 +556,10 @@ export class WhatsappClientBotService {
       endDate,
     );
 
+    this.logger.log(
+      `showAvailableDates company=${companyId} service=${ctx.selectedServiceId} collab=${ctx.selectedCollaboratorId ?? 'any'} range=${now.toISOString().slice(0,10)}..${endDate.toISOString().slice(0,10)} → ${dates.length} dates: [${dates.join(',')}]`,
+    );
+
     const fmtDate = (d: Date) =>
       `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
     const rangeLabel = `${fmtDate(now)} a ${fmtDate(endDate)}`;
