@@ -556,7 +556,7 @@ export class WhatsappClientBotService {
       endDate,
     );
 
-    this.logger.log(
+    this.logger.warn(
       `showAvailableDates company=${companyId} service=${ctx.selectedServiceId} collab=${ctx.selectedCollaboratorId ?? 'any'} range=${now.toISOString().slice(0,10)}..${endDate.toISOString().slice(0,10)} → ${dates.length} dates: [${dates.join(',')}]`,
     );
 

@@ -119,7 +119,10 @@ export class ScheduleEngineService {
         where: { companyId, collaboratorId: null, dayOfWeek, isOpen: true },
       });
       const bh = collabHour ?? companyHour;
-      if (!bh) return [];
+      if (!bh) {
+        this.logger.warn(`[slots] ${dateStr}: no BH for collab ${dto.collaboratorId} on ${dayOfWeek} — returning empty`);
+        return [];
+      }
       openTime = specialDay?.openTime ?? bh.openTime;
       closeTime = specialDay?.closeTime ?? bh.closeTime;
       slotDurationMin = bh.slotDurationMin;
@@ -153,7 +156,7 @@ export class ScheduleEngineService {
       return [];
     }
 
-    this.logger.log(`[slots] ${dateStr}: open=${openTime} close=${closeTime} slot=${slotDurationMin}min collabs=${collaboratorIds.length}`);
+    this.logger.warn(`[slots] ${dateStr}: open=${openTime} close=${closeTime} slot=${slotDurationMin}min collabs=${collaboratorIds.length}`);
 
     const open = timeToMinutes(openTime);
     const close = timeToMinutes(closeTime);
@@ -188,7 +191,7 @@ export class ScheduleEngineService {
       free.forEach((s) => availableSet.add(s));
     }
 
-    this.logger.log(`[slots] ${dateStr}: candidates=${candidateSlots.length} available=${availableSet.size}`);
+    this.logger.warn(`[slots] ${dateStr}: candidates=${candidateSlots.length} available=${availableSet.size}`);
 
     return candidateSlots.map((slot) => ({
       time: slot,
