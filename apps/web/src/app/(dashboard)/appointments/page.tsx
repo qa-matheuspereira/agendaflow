@@ -1,13 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
+import { format, startOfWeek, addWeeks, subWeeks, addDays, isToday } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import {
-  Plus, Search, MoreHorizontal, CheckCircle2, PlayCircle, XCircle,
-  AlertTriangle, Loader2, CalendarDays, Filter, Trash2,
+  Plus, ChevronLeft, ChevronRight, CheckCircle2, PlayCircle, XCircle,
+  AlertTriangle, Loader2, Trash2, User, Clock,
 } from 'lucide-react';
 
 import {
@@ -25,14 +26,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from '@/components/ui/table';
-import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -40,20 +36,73 @@ import {
   Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
 } from '@/components/ui/form';
 import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
 
-const STATUS_MAP: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-  SCHEDULED: { label: 'Agendado', variant: 'secondary' },
-  CONFIRMED: { label: 'Confirmado', variant: 'default' },
-  IN_PROGRESS: { label: 'Em atendimento', variant: 'default' },
-  COMPLETED: { label: 'Concluído', variant: 'outline' },
-  CANCELLED: { label: 'Cancelado', variant: 'destructive' },
-  NO_SHOW: { label: 'Não compareceu', variant: 'destructive' },
+// ─── Calendar constants ────────────────────────────────────────────────────────
+const GRID_START = 7;   // 07:00
+const GRID_END = 22;    // 22:00
+const HOUR_H = 64;      // px per hour
+const PPM = HOUR_H / 60; // px per minute
+const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i);
+const DAY_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+// ─── Status config ─────────────────────────────────────────────────────────────
+const STATUS_CFG: Record<string, {
+  label: string;
+  cls: string;
+  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
+}> = {
+  SCHEDULED:   { label: 'Agendado',       cls: 'bg-blue-50 border-l-[3px] border-l-blue-500 text-blue-900 dark:bg-blue-950/40 dark:text-blue-200',    badgeVariant: 'secondary' },
+  CONFIRMED:   { label: 'Confirmado',     cls: 'bg-green-50 border-l-[3px] border-l-green-500 text-green-900 dark:bg-green-950/40 dark:text-green-200', badgeVariant: 'default' },
+  IN_PROGRESS: { label: 'Em atendimento', cls: 'bg-amber-50 border-l-[3px] border-l-amber-500 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200', badgeVariant: 'default' },
+  COMPLETED:   { label: 'Concluído',      cls: 'bg-slate-50 border-l-[3px] border-l-slate-400 text-slate-600 dark:bg-slate-800/40 dark:text-slate-300',  badgeVariant: 'outline' },
+  CANCELLED:   { label: 'Cancelado',      cls: 'bg-red-50 border-l-[3px] border-l-red-400 text-red-700 opacity-60 dark:bg-red-950/30 dark:text-red-300', badgeVariant: 'destructive' },
+  NO_SHOW:     { label: 'Não compareceu', cls: 'bg-orange-50 border-l-[3px] border-l-orange-400 text-orange-700 opacity-60 dark:bg-orange-950/30 dark:text-orange-300', badgeVariant: 'destructive' },
 };
 
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function timeToMin(t: string) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+type LayoutItem = { appt: Appointment; lane: number; totalLanes: number };
+
+function layoutDay(appts: Appointment[]): LayoutItem[] {
+  const sorted = [...appts].sort((a, b) => timeToMin(a.scheduledTime) - timeToMin(b.scheduledTime));
+  const items: Array<{ appt: Appointment; lane: number; endMin: number }> = [];
+
+  for (const appt of sorted) {
+    const startMin = timeToMin(appt.scheduledTime);
+    const endMin = startMin + appt.serviceDurationMinutes;
+    const usedLanes = new Set(
+      items
+        .filter(it => startMin < it.endMin && endMin > timeToMin(it.appt.scheduledTime))
+        .map(it => it.lane),
+    );
+    let lane = 0;
+    while (usedLanes.has(lane)) lane++;
+    items.push({ appt, lane, endMin });
+  }
+
+  return items.map((item) => {
+    const s = timeToMin(item.appt.scheduledTime);
+    const e = s + item.appt.serviceDurationMinutes;
+    const concurrent = items.filter(it => {
+      const os = timeToMin(it.appt.scheduledTime);
+      const oe = os + it.appt.serviceDurationMinutes;
+      return s < oe && e > os;
+    });
+    return { appt: item.appt, lane: item.lane, totalLanes: Math.max(...concurrent.map(it => it.lane)) + 1 };
+  });
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────────
 export default function AppointmentsPage() {
-  const [page, setPage] = useState(1);
-  const [dateFilter, setDateFilter] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const today = new Date();
+
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(today, { weekStartsOn: 0 }));
+  const [collabFilter, setCollabFilter] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
@@ -61,29 +110,33 @@ export default function AppointmentsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  const weekEnd = addDays(weekStart, 6);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
   const { data, isLoading } = useAppointments({
-    page, limit: 20,
-    date: dateFilter || undefined,
-    status: statusFilter || undefined,
+    dateFrom: format(weekStart, 'yyyy-MM-dd'),
+    dateTo: format(weekEnd, 'yyyy-MM-dd'),
+    collaboratorId: collabFilter || undefined,
+    limit: 500,
   });
 
   const { data: clientsData } = useClients({ limit: 200 });
   const { data: collabsData } = useCollaborators({ limit: 100 });
   const { data: servicesData } = useServices({ limit: 100 });
 
-  const createMutation = useCreateAppointment();
   const confirmMutation = useConfirmAppointment();
   const startMutation = useStartAppointment();
   const completeMutation = useCompleteAppointment();
   const cancelMutation = useCancelAppointment();
   const noShowMutation = useNoShowAppointment();
   const deleteMutation = useDeleteAppointment();
+  const createMutation = useCreateAppointment();
 
   const form = useForm<CreateAppointmentFormData>({
     resolver: zodResolver(createAppointmentSchema),
     defaultValues: {
       clientId: '', collaboratorId: '', serviceId: '',
-      scheduledDate: dateFilter, scheduledTime: '', notes: '',
+      scheduledDate: format(today, 'yyyy-MM-dd'), scheduledTime: '', notes: '',
     },
   });
 
@@ -91,245 +144,331 @@ export default function AppointmentsPage() {
   const watchService = form.watch('serviceId');
   const watchDate = form.watch('scheduledDate');
 
-  const { data: slots } = useAvailableSlots({
-    collaboratorId: watchCollab,
-    serviceId: watchService,
-    date: watchDate,
-  });
+  const { data: slots } = useAvailableSlots({ collaboratorId: watchCollab, serviceId: watchService, date: watchDate });
+  const availableSlots = slots?.filter((s) => s.available) ?? [];
 
-  function openCreate() {
-    form.reset({
-      clientId: '', collaboratorId: '', serviceId: '',
-      scheduledDate: dateFilter, scheduledTime: '', notes: '',
-    });
-    setDialogOpen(true);
-  }
+  const appointments = data?.data ?? [];
+  const collabs = collabsData?.data ?? [];
+  const clients = clientsData?.data ?? [];
+  const services = servicesData?.data ?? [];
 
-  async function onSubmit(values: CreateAppointmentFormData) {
-    try {
-      await createMutation.mutateAsync({
-        ...values,
-        notes: values.notes || undefined,
-      });
-      toast.success('Agendamento criado!');
-      setDialogOpen(false);
-    } catch {
-      toast.error('Erro ao criar agendamento');
+  const apptsByDate = useMemo(() => {
+    const map = new Map<string, Appointment[]>();
+    for (const appt of appointments) {
+      if (!map.has(appt.scheduledDate)) map.set(appt.scheduledDate, []);
+      map.get(appt.scheduledDate)!.push(appt);
     }
-  }
+    return map;
+  }, [appointments]);
 
   async function handleAction(id: string, action: 'confirm' | 'start' | 'complete' | 'noShow') {
     try {
       switch (action) {
-        case 'confirm': await confirmMutation.mutateAsync(id); toast.success('Confirmado!'); break;
-        case 'start': await startMutation.mutateAsync(id); toast.success('Atendimento iniciado!'); break;
-        case 'complete': await completeMutation.mutateAsync(id); toast.success('Atendimento concluído!'); break;
-        case 'noShow': await noShowMutation.mutateAsync(id); toast.success('Marcado como não compareceu'); break;
+        case 'confirm':  await confirmMutation.mutateAsync(id);  toast.success('Confirmado!'); break;
+        case 'start':    await startMutation.mutateAsync(id);    toast.success('Atendimento iniciado!'); break;
+        case 'complete': await completeMutation.mutateAsync(id); toast.success('Concluído!'); break;
+        case 'noShow':   await noShowMutation.mutateAsync(id);   toast.success('Marcado como não compareceu'); break;
       }
-    } catch {
-      toast.error('Erro ao atualizar status');
-    }
+    } catch { toast.error('Erro ao atualizar status'); }
   }
 
   async function handleCancel() {
     if (!cancelTarget) return;
     try {
       await cancelMutation.mutateAsync({ id: cancelTarget, reason: cancelReason || undefined });
-      toast.success('Agendamento cancelado');
+      toast.success('Cancelado');
       setCancelDialogOpen(false);
       setCancelReason('');
-    } catch {
-      toast.error('Erro ao cancelar');
-    }
+    } catch { toast.error('Erro ao cancelar'); }
   }
 
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
       await deleteMutation.mutateAsync(deleteTarget);
-      toast.success('Agendamento excluído');
+      toast.success('Excluído');
       setDeleteDialogOpen(false);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast.error(msg ?? 'Erro ao excluir agendamento');
+      toast.error(msg ?? 'Erro ao excluir');
     }
   }
 
-  const appointments = data?.data ?? [];
-  const total = data?.total ?? 0;
-  const totalPages = Math.ceil(total / 20);
-  const clients = clientsData?.data ?? [];
-  const collabs = collabsData?.data ?? [];
-  const services = servicesData?.data ?? [];
-  const availableSlots = slots?.filter((s) => s.available) ?? [];
+  async function onSubmit(values: CreateAppointmentFormData) {
+    try {
+      await createMutation.mutateAsync({ ...values, notes: values.notes || undefined });
+      toast.success('Agendamento criado!');
+      setDialogOpen(false);
+    } catch { toast.error('Erro ao criar agendamento'); }
+  }
+
+  function openCreate() {
+    form.reset({
+      clientId: '', collaboratorId: '', serviceId: '',
+      scheduledDate: format(today, 'yyyy-MM-dd'), scheduledTime: '', notes: '',
+    });
+    setDialogOpen(true);
+  }
+
+  // Current time indicator
+  const nowMin = today.getHours() * 60 + today.getMinutes();
+  const nowTop = (nowMin - GRID_START * 60) * PPM;
+  const showNowLine = nowMin >= GRID_START * 60 && nowMin <= GRID_END * 60;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Agendamentos</h1>
-          <p className="text-sm text-muted-foreground">
-            {total} agendamento{total !== 1 ? 's' : ''} encontrado{total !== 1 ? 's' : ''}
-          </p>
+    <div className="flex h-[calc(100vh-5rem)] flex-col gap-3">
+
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <h1 className="text-xl font-bold tracking-tight flex-1">Agendamentos</h1>
+
+        {/* Week navigation */}
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekStart(subWeeks(weekStart, 1))}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs px-2"
+            onClick={() => setWeekStart(startOfWeek(today, { weekStartsOn: 0 }))}
+          >
+            Hoje
+          </Button>
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekStart(addWeeks(weekStart, 1))}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <span className="hidden sm:inline text-sm text-muted-foreground mx-1">
+            {format(weekStart, "d MMM", { locale: ptBR })} – {format(weekEnd, "d MMM yyyy", { locale: ptBR })}
+          </span>
         </div>
-        <Button onClick={openCreate} size="sm" className="w-full sm:w-auto">
-          <Plus className="mr-2 h-4 w-4" /> Novo Agendamento
+
+        {/* Collaborator filter */}
+        <Select value={collabFilter || '__all__'} onValueChange={(v) => setCollabFilter(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="h-8 w-44 text-xs">
+            <SelectValue placeholder="Todos colaboradores" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">Todos colaboradores</SelectItem>
+            {collabs.filter((c) => c.isActive).map((c) => (
+              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Button size="sm" className="h-8" onClick={openCreate}>
+          <Plus className="mr-1 h-3.5 w-3.5" /> Novo Agendamento
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
-          <Input
-            type="date"
-            value={dateFilter}
-            onChange={(e) => { setDateFilter(e.target.value); setPage(1); }}
-            className="w-36 text-sm"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v === 'ALL' ? '' : v); setPage(1); }}>
-          <SelectTrigger className="w-40 text-sm">
-            <Filter className="mr-2 h-4 w-4" />
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">Todos</SelectItem>
-            <SelectItem value="SCHEDULED">Agendado</SelectItem>
-            <SelectItem value="CONFIRMED">Confirmado</SelectItem>
-            <SelectItem value="IN_PROGRESS">Em atendimento</SelectItem>
-            <SelectItem value="COMPLETED">Concluído</SelectItem>
-            <SelectItem value="CANCELLED">Cancelado</SelectItem>
-            <SelectItem value="NO_SHOW">Não compareceu</SelectItem>
-          </SelectContent>
-        </Select>
-        {(dateFilter || statusFilter) && (
-          <Button variant="ghost" size="sm" onClick={() => { setDateFilter(''); setStatusFilter(''); }}>
-            Limpar
-          </Button>
-        )}
-      </div>
+      {/* ── Calendar ────────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto rounded-lg border bg-card min-h-0">
 
-      {/* Table */}
-      <div className="rounded-lg border bg-card overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Horário</TableHead>
-              <TableHead>Cliente</TableHead>
-              <TableHead>Serviço</TableHead>
-              <TableHead>Colaborador</TableHead>
-              <TableHead className="text-center">Status</TableHead>
-              <TableHead className="w-[50px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-muted-foreground" />
-                </TableCell>
-              </TableRow>
-            ) : appointments.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
-                  Nenhum agendamento encontrado
-                </TableCell>
-              </TableRow>
-            ) : (
-              appointments.map((apt) => {
-                const st = STATUS_MAP[apt.status] ?? { label: apt.status, variant: 'outline' as const };
-                return (
-                  <TableRow key={apt.id}>
-                    <TableCell>
-                      <div>
-                        <span className="font-medium">{apt.scheduledTime}</span>
-                        <span className="text-muted-foreground"> — {apt.endTime}</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{apt.scheduledDate}</span>
-                    </TableCell>
-                    <TableCell className="font-medium">{apt.clientName}</TableCell>
-                    <TableCell>
-                      <div>{apt.serviceName}</div>
-                      <span className="text-xs text-muted-foreground">{apt.serviceDurationMinutes} min</span>
-                    </TableCell>
-                    <TableCell>{apt.collaboratorName}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge variant={st.variant}>{st.label}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {apt.status === 'SCHEDULED' && (
-                            <DropdownMenuItem onClick={() => handleAction(apt.id, 'confirm')}>
-                              <CheckCircle2 className="mr-2 h-4 w-4" /> Confirmar
-                            </DropdownMenuItem>
+        {/* Day headers — sticky */}
+        <div className="flex border-b sticky top-0 bg-card z-20">
+          <div className="w-14 shrink-0 border-r" />
+          {days.map((day, i) => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const count = apptsByDate.get(dateStr)?.length ?? 0;
+            const isTodayCol = isToday(day);
+            return (
+              <div
+                key={i}
+                className={`flex-1 min-w-0 py-2 text-center border-r last:border-r-0 ${isTodayCol ? 'bg-primary/5' : ''}`}
+              >
+                <div className={`text-[11px] font-medium uppercase tracking-wide ${isTodayCol ? 'text-primary' : 'text-muted-foreground'}`}>
+                  {DAY_SHORT[day.getDay()]}
+                </div>
+                <div className={`text-xl font-bold leading-tight ${isTodayCol ? 'text-primary' : ''}`}>
+                  {format(day, 'd')}
+                </div>
+                {count > 0 ? (
+                  <div className="text-[10px] text-muted-foreground">{count} agend.</div>
+                ) : (
+                  <div className="text-[10px] invisible">–</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Grid */}
+        <div className="relative flex" style={{ height: HOUR_H * (GRID_END - GRID_START) }}>
+
+          {/* Hour labels */}
+          <div className="w-14 shrink-0 border-r relative z-10">
+            {HOURS.map((h) => (
+              <div
+                key={h}
+                className="absolute w-full flex items-start justify-end pr-2 pt-0.5"
+                style={{ top: (h - GRID_START) * HOUR_H, height: HOUR_H }}
+              >
+                <span className="text-[11px] text-muted-foreground select-none">
+                  {String(h).padStart(2, '0')}:00
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Day columns */}
+          {days.map((day, dayIdx) => {
+            const dateStr = format(day, 'yyyy-MM-dd');
+            const dayAppts = apptsByDate.get(dateStr) ?? [];
+            const layout = layoutDay(dayAppts);
+            const isTodayCol = isToday(day);
+
+            return (
+              <div
+                key={dayIdx}
+                className={`flex-1 min-w-0 relative border-r last:border-r-0 ${isTodayCol ? 'bg-primary/[0.015]' : ''}`}
+              >
+                {/* Hour grid lines */}
+                {HOURS.map((h) => (
+                  <div
+                    key={h}
+                    className="absolute inset-x-0 border-t border-border/30"
+                    style={{ top: (h - GRID_START) * HOUR_H }}
+                  />
+                ))}
+                {/* Half-hour lines */}
+                {HOURS.map((h) => (
+                  <div
+                    key={`${h}h`}
+                    className="absolute inset-x-0 border-t border-border/15"
+                    style={{ top: (h - GRID_START) * HOUR_H + HOUR_H / 2 }}
+                  />
+                ))}
+
+                {/* Now line */}
+                {isTodayCol && showNowLine && (
+                  <div
+                    className="absolute inset-x-0 z-10 flex items-center pointer-events-none"
+                    style={{ top: nowTop }}
+                  >
+                    <div className="h-2.5 w-2.5 rounded-full bg-red-500 shrink-0 -ml-1.5" />
+                    <div className="flex-1 h-px bg-red-500" />
+                  </div>
+                )}
+
+                {/* Loading shimmer */}
+                {isLoading && dayIdx === 0 && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/30" />
+                  </div>
+                )}
+
+                {/* Appointment blocks */}
+                {layout.map(({ appt, lane, totalLanes }) => {
+                  const startMin = timeToMin(appt.scheduledTime);
+                  const top = (startMin - GRID_START * 60) * PPM;
+                  const height = Math.max(appt.serviceDurationMinutes * PPM, 26);
+                  const widthPct = 100 / totalLanes;
+                  const leftPct = lane * widthPct;
+                  const cfg = STATUS_CFG[appt.status] ?? STATUS_CFG.SCHEDULED;
+                  const compact = height < 40;
+
+                  return (
+                    <Popover key={appt.id}>
+                      <PopoverTrigger asChild>
+                        <button
+                          className={`absolute rounded px-1.5 py-0.5 text-left overflow-hidden cursor-pointer hover:brightness-95 active:brightness-90 transition-all ${cfg.cls}`}
+                          style={{
+                            top,
+                            height,
+                            left: `calc(${leftPct}% + 2px)`,
+                            width: `calc(${widthPct}% - 4px)`,
+                            zIndex: 5,
+                          }}
+                        >
+                          <p className={`font-semibold leading-tight truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                            {appt.clientName}
+                          </p>
+                          {!compact && (
+                            <p className="text-[10px] leading-tight truncate opacity-80">
+                              {appt.serviceName}
+                            </p>
                           )}
-                          {(apt.status === 'SCHEDULED' || apt.status === 'CONFIRMED') && (
-                            <DropdownMenuItem onClick={() => handleAction(apt.id, 'start')}>
-                              <PlayCircle className="mr-2 h-4 w-4" /> Iniciar Atendimento
-                            </DropdownMenuItem>
+                          {height >= 54 && (
+                            <p className="text-[10px] leading-tight opacity-60">
+                              {appt.scheduledTime}–{appt.endTime}
+                            </p>
                           )}
-                          {apt.status === 'IN_PROGRESS' && (
-                            <DropdownMenuItem onClick={() => handleAction(apt.id, 'complete')}>
-                              <CheckCircle2 className="mr-2 h-4 w-4" /> Concluir
-                            </DropdownMenuItem>
+                        </button>
+                      </PopoverTrigger>
+
+                      <PopoverContent side="right" align="start" className="w-72 p-0" sideOffset={4}>
+                        {/* Popover header */}
+                        <div className="p-3 space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-semibold text-sm leading-tight">{appt.clientName}</span>
+                            <Badge variant={cfg.badgeVariant} className="text-[10px] shrink-0">{cfg.label}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{appt.serviceName} · {appt.serviceDurationMinutes} min</p>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <User className="h-3 w-3 shrink-0" />
+                            {appt.collaboratorName}
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            {appt.scheduledTime} – {appt.endTime} &nbsp;·&nbsp;
+                            {format(new Date(appt.scheduledDate + 'T12:00:00'), "dd/MM/yyyy", { locale: ptBR })}
+                          </div>
+                        </div>
+
+                        <Separator />
+
+                        {/* Actions */}
+                        <div className="p-2 flex flex-wrap gap-1">
+                          {appt.status === 'SCHEDULED' && (
+                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleAction(appt.id, 'confirm')}>
+                              <CheckCircle2 className="h-3 w-3" /> Confirmar
+                            </Button>
                           )}
-                          {!['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(apt.status) && (
+                          {(appt.status === 'SCHEDULED' || appt.status === 'CONFIRMED') && (
+                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleAction(appt.id, 'start')}>
+                              <PlayCircle className="h-3 w-3" /> Iniciar
+                            </Button>
+                          )}
+                          {appt.status === 'IN_PROGRESS' && (
+                            <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleAction(appt.id, 'complete')}>
+                              <CheckCircle2 className="h-3 w-3" /> Concluir
+                            </Button>
+                          )}
+                          {!['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(appt.status) && (
                             <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => handleAction(apt.id, 'noShow')}>
-                                <AlertTriangle className="mr-2 h-4 w-4" /> Não Compareceu
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => { setCancelTarget(apt.id); setCancelDialogOpen(true); }}
-                                className="text-destructive focus:text-destructive"
+                              <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleAction(appt.id, 'noShow')}>
+                                <AlertTriangle className="h-3 w-3" /> Não veio
+                              </Button>
+                              <Button
+                                size="sm" variant="ghost"
+                                className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+                                onClick={() => { setCancelTarget(appt.id); setCancelDialogOpen(true); }}
                               >
-                                <XCircle className="mr-2 h-4 w-4" /> Cancelar
-                              </DropdownMenuItem>
+                                <XCircle className="h-3 w-3" /> Cancelar
+                              </Button>
                             </>
                           )}
-                          {['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(apt.status) && (
-                            <>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                onClick={() => { setDeleteTarget(apt.id); setDeleteDialogOpen(true); }}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> Excluir
-                              </DropdownMenuItem>
-                            </>
+                          {['COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(appt.status) && (
+                            <Button
+                              size="sm" variant="ghost"
+                              className="h-7 text-xs gap-1 text-destructive hover:text-destructive"
+                              onClick={() => { setDeleteTarget(appt.id); setDeleteDialogOpen(true); }}
+                            >
+                              <Trash2 className="h-3 w-3" /> Excluir
+                            </Button>
                           )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </Table>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-            Anterior
-          </Button>
-          <span className="text-sm text-muted-foreground">Página {page} de {totalPages}</span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
-            Próxima
-          </Button>
-        </div>
-      )}
-
-      {/* Create Dialog */}
+      {/* ── Create Dialog ───────────────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
@@ -338,118 +477,80 @@ export default function AppointmentsPage() {
           </DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="clientId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Cliente *</FormLabel>
+              <FormField control={form.control} name="clientId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Cliente *</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      {clients.filter((c) => !c.isBlocked).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="serviceId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Serviço *</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Selecione o serviço" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      {services.filter((s) => s.isActive).map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name} — {s.durationMinutes}min</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="collaboratorId" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Colaborador *</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Selecione o colaborador" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      {collabs.filter((c) => c.isActive).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="scheduledDate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Data *</FormLabel>
+                  <FormControl><Input type="date" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="scheduledTime" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Horário *</FormLabel>
+                  {availableSlots.length > 0 ? (
                     <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                      </FormControl>
+                      <FormControl><SelectTrigger><SelectValue placeholder="Selecione um horário" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        {clients.filter((c) => !c.isBlocked).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        {availableSlots.map((slot) => (
+                          <SelectItem key={slot.time} value={slot.time}>{slot.time} — {slot.endTime}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="serviceId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Serviço *</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger><SelectValue placeholder="Selecione o serviço" /></SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {services.filter((s) => s.isActive).map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name} — {s.durationMinutes}min
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="collaboratorId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Colaborador *</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger><SelectValue placeholder="Selecione o colaborador" /></SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {collabs.filter((c) => c.isActive).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="scheduledDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Data *</FormLabel>
-                    <FormControl><Input type="date" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="scheduledTime"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Horário *</FormLabel>
-                    {availableSlots.length > 0 ? (
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger><SelectValue placeholder="Selecione um horário" /></SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {availableSlots.map((slot) => (
-                            <SelectItem key={slot.time} value={slot.time}>
-                              {slot.time} — {slot.endTime}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <FormControl>
-                        <Input placeholder="HH:MM" {...field} />
-                      </FormControl>
-                    )}
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Observações</FormLabel>
-                    <FormControl><Textarea placeholder="Observações adicionais" rows={2} {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  ) : (
+                    <FormControl><Input placeholder="HH:MM" {...field} /></FormControl>
+                  )}
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="notes" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Observações</FormLabel>
+                  <FormControl><Textarea placeholder="Observações adicionais" rows={2} {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
                 <Button type="submit" disabled={createMutation.isPending}>
@@ -462,14 +563,12 @@ export default function AppointmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
+      {/* ── Delete Dialog ───────────────────────────────────────────────────── */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Excluir Agendamento</DialogTitle>
-            <DialogDescription>
-              Tem certeza? Esta ação é irreversível e removerá o agendamento permanentemente.
-            </DialogDescription>
+            <DialogDescription>Tem certeza? Esta ação é irreversível.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Voltar</Button>
@@ -481,7 +580,7 @@ export default function AppointmentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Cancel Dialog */}
+      {/* ── Cancel Dialog ───────────────────────────────────────────────────── */}
       <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -503,6 +602,7 @@ export default function AppointmentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
