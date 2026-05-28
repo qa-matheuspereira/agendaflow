@@ -100,7 +100,12 @@ export class ScheduleEngineService {
       }
     }
 
-    if (collaboratorIds.length === 0) return [];
+    if (collaboratorIds.length === 0) {
+      this.logger.warn(`[slots] ${dateStr}: 0 collaborators — returning empty`);
+      return [];
+    }
+
+    this.logger.debug(`[slots] ${dateStr}: collaboratorIds=[${collaboratorIds.join(',')}]`);
 
     let openTime: string | undefined;
     let closeTime: string | undefined;
@@ -143,7 +148,12 @@ export class ScheduleEngineService {
       }
     }
 
-    if (!openTime || !closeTime) return [];
+    if (!openTime || !closeTime) {
+      this.logger.warn(`[slots] ${dateStr}: openTime/closeTime undefined after BH lookup — returning empty`);
+      return [];
+    }
+
+    this.logger.log(`[slots] ${dateStr}: open=${openTime} close=${closeTime} slot=${slotDurationMin}min collabs=${collaboratorIds.length}`);
 
     const open = timeToMinutes(openTime);
     const close = timeToMinutes(closeTime);
@@ -161,7 +171,10 @@ export class ScheduleEngineService {
       if (t >= nowMinutes) candidateSlots.push(minutesToTime(t));
     }
 
-    if (candidateSlots.length === 0) return [];
+    if (candidateSlots.length === 0) {
+      this.logger.warn(`[slots] ${dateStr}: 0 candidateSlots (open=${open} close=${close} total=${totalServiceTime} slot=${slotDurationMin} nowMin=${nowMinutes}) — returning empty`);
+      return [];
+    }
 
     const availableSet = new Set<string>();
     for (const collabId of collaboratorIds) {
@@ -174,6 +187,8 @@ export class ScheduleEngineService {
       );
       free.forEach((s) => availableSet.add(s));
     }
+
+    this.logger.log(`[slots] ${dateStr}: candidates=${candidateSlots.length} available=${availableSet.size}`);
 
     return candidateSlots.map((slot) => ({
       time: slot,
