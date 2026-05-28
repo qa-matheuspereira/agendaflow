@@ -20,6 +20,7 @@ import type { Appointment } from '@/hooks/api/use-appointments';
 import { useClients } from '@/hooks/api/use-clients';
 import { useCollaborators } from '@/hooks/api/use-collaborators';
 import { useServices } from '@/hooks/api/use-services';
+import { useBusinessHours } from '@/hooks/api/use-business-hours';
 import { createAppointmentSchema, type CreateAppointmentFormData } from '@/schemas';
 
 import { Button } from '@/components/ui/button';
@@ -39,12 +40,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 
 // ─── Calendar constants ────────────────────────────────────────────────────────
-const GRID_START = 7;   // 07:00
-const GRID_END = 22;    // 22:00
 const HOUR_H = 64;      // px per hour
 const PPM = HOUR_H / 60; // px per minute
-const HOURS = Array.from({ length: GRID_END - GRID_START }, (_, i) => GRID_START + i);
 const DAY_SHORT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+const ACTIVE_STATUSES = new Set(['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS']);
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 const STATUS_CFG: Record<string, {
@@ -103,6 +103,7 @@ export default function AppointmentsPage() {
 
   const [weekStart, setWeekStart] = useState(() => startOfWeek(today, { weekStartsOn: 0 }));
   const [collabFilter, setCollabFilter] = useState('');
+  const [showFinished, setShowFinished] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
@@ -123,6 +124,7 @@ export default function AppointmentsPage() {
   const { data: clientsData } = useClients({ limit: 200 });
   const { data: collabsData } = useCollaborators({ limit: 100 });
   const { data: servicesData } = useServices({ limit: 100 });
+  const { data: businessHours = [] } = useBusinessHours();
 
   const confirmMutation = useConfirmAppointment();
   const startMutation = useStartAppointment();
@@ -147,16 +149,35 @@ export default function AppointmentsPage() {
   const { data: slots } = useAvailableSlots({ collaboratorId: watchCollab, serviceId: watchService, date: watchDate });
   const availableSlots = slots?.filter((s) => s.available) ?? [];
 
-  const appointments = data?.data ?? [];
+  const allAppointments = data?.data ?? [];
   const collabs = collabsData?.data ?? [];
   const clients = clientsData?.data ?? [];
   const services = servicesData?.data ?? [];
 
+  // Filter finished appointments unless showFinished is on
+  const appointments = showFinished
+    ? allAppointments
+    : allAppointments.filter((a) => ACTIVE_STATUSES.has(a.status));
+
+  // Dynamic grid range from business hours (fallback 07–22)
+  const openHours = businessHours.filter((bh) => bh.isOpen);
+  const gridStart = openHours.length > 0
+    ? Math.max(0, Math.min(...openHours.map((bh) => parseInt(bh.openTime.split(':')[0]))) - 1)
+    : 7;
+  const gridEnd = openHours.length > 0
+    ? Math.min(24, Math.max(...openHours.map((bh) => {
+        const [h, m] = bh.closeTime.split(':').map(Number);
+        return m > 0 ? h + 1 : h;
+      })) + 1)
+    : 22;
+  const hours = Array.from({ length: gridEnd - gridStart }, (_, i) => gridStart + i);
+
   const apptsByDate = useMemo(() => {
     const map = new Map<string, Appointment[]>();
     for (const appt of appointments) {
-      if (!map.has(appt.scheduledDate)) map.set(appt.scheduledDate, []);
-      map.get(appt.scheduledDate)!.push(appt);
+      const key = appt.scheduledDate.slice(0, 10); // normalize ISO → YYYY-MM-DD
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(appt);
     }
     return map;
   }, [appointments]);
@@ -212,8 +233,8 @@ export default function AppointmentsPage() {
 
   // Current time indicator
   const nowMin = today.getHours() * 60 + today.getMinutes();
-  const nowTop = (nowMin - GRID_START * 60) * PPM;
-  const showNowLine = nowMin >= GRID_START * 60 && nowMin <= GRID_END * 60;
+  const nowTop = (nowMin - gridStart * 60) * PPM;
+  const showNowLine = nowMin >= gridStart * 60 && nowMin <= gridEnd * 60;
 
   return (
     <div className="flex h-[calc(100vh-5rem)] flex-col gap-3">
@@ -256,6 +277,15 @@ export default function AppointmentsPage() {
           </SelectContent>
         </Select>
 
+        <Button
+          size="sm"
+          variant={showFinished ? 'secondary' : 'outline'}
+          className="h-8 text-xs"
+          onClick={() => setShowFinished(!showFinished)}
+        >
+          {showFinished ? 'Ocultar concluídos' : 'Mostrar concluídos'}
+        </Button>
+
         <Button size="sm" className="h-8" onClick={openCreate}>
           <Plus className="mr-1 h-3.5 w-3.5" /> Novo Agendamento
         </Button>
@@ -293,15 +323,15 @@ export default function AppointmentsPage() {
         </div>
 
         {/* Grid */}
-        <div className="relative flex" style={{ height: HOUR_H * (GRID_END - GRID_START) }}>
+        <div className="relative flex" style={{ height: HOUR_H * (gridEnd - gridStart) }}>
 
           {/* Hour labels */}
           <div className="w-14 shrink-0 border-r relative z-10">
-            {HOURS.map((h) => (
+            {hours.map((h) => (
               <div
                 key={h}
                 className="absolute w-full flex items-start justify-end pr-2 pt-0.5"
-                style={{ top: (h - GRID_START) * HOUR_H, height: HOUR_H }}
+                style={{ top: (h - gridStart) * HOUR_H, height: HOUR_H }}
               >
                 <span className="text-[11px] text-muted-foreground select-none">
                   {String(h).padStart(2, '0')}:00
@@ -323,19 +353,19 @@ export default function AppointmentsPage() {
                 className={`flex-1 min-w-0 relative border-r last:border-r-0 ${isTodayCol ? 'bg-primary/[0.015]' : ''}`}
               >
                 {/* Hour grid lines */}
-                {HOURS.map((h) => (
+                {hours.map((h) => (
                   <div
                     key={h}
                     className="absolute inset-x-0 border-t border-border/30"
-                    style={{ top: (h - GRID_START) * HOUR_H }}
+                    style={{ top: (h - gridStart) * HOUR_H }}
                   />
                 ))}
                 {/* Half-hour lines */}
-                {HOURS.map((h) => (
+                {hours.map((h) => (
                   <div
                     key={`${h}h`}
                     className="absolute inset-x-0 border-t border-border/15"
-                    style={{ top: (h - GRID_START) * HOUR_H + HOUR_H / 2 }}
+                    style={{ top: (h - gridStart) * HOUR_H + HOUR_H / 2 }}
                   />
                 ))}
 
@@ -360,7 +390,7 @@ export default function AppointmentsPage() {
                 {/* Appointment blocks */}
                 {layout.map(({ appt, lane, totalLanes }) => {
                   const startMin = timeToMin(appt.scheduledTime);
-                  const top = (startMin - GRID_START * 60) * PPM;
+                  const top = (startMin - gridStart * 60) * PPM;
                   const height = Math.max(appt.serviceDurationMinutes * PPM, 26);
                   const widthPct = 100 / totalLanes;
                   const leftPct = lane * widthPct;
