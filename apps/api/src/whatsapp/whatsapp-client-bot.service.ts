@@ -19,6 +19,8 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 interface BookingContext {
+  categories?: string[];     // category IDs in display order
+  selectedCategoryId?: string;
   collaborators?: string[];
   selectedCollaboratorId?: string;
   services?: string[];
@@ -66,6 +68,7 @@ function parseDate(input: string): string | null {
 }
 
 const BOOKING_STEPS = [
+  'SELECT_CATEGORY',
   'SELECT_COLLABORATOR',
   'SELECT_SERVICE',
   'SELECT_DATE',
@@ -282,6 +285,9 @@ export class WhatsappClientBotService {
     const ctx = (state.context ?? {}) as BookingContext;
 
     switch (state.currentStep) {
+      case 'SELECT_CATEGORY':
+        await this.handleCategorySelection(instanceName, rawNumber, messageText, ctx, companyId);
+        break;
       case 'SELECT_COLLABORATOR':
         await this.handleCollaboratorSelection(instanceName, rawNumber, messageText, ctx, companyId);
         break;
@@ -325,6 +331,18 @@ export class WhatsappClientBotService {
     rawNumber: string,
     companyId: string,
   ): Promise<void> {
+    // Check for categories with active services first
+    const categories = await this.prisma.serviceCategory.findMany({
+      where: { companyId },
+      include: { services: { where: { isActive: true }, select: { id: true } } },
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+    });
+    const categoriesWithServices = categories.filter((c) => c.services.length > 0);
+    if (categoriesWithServices.length > 0) {
+      await this.showCategoryMenu(instanceName, rawNumber, companyId, categoriesWithServices);
+      return;
+    }
+
     const services = await this.prisma.service.findMany({
       where: { companyId, isActive: true },
       select: { id: true, name: true, durationMinutes: true, price: true, schedulingMode: true },
@@ -395,6 +413,89 @@ export class WhatsappClientBotService {
     } as BookingContext);
   }
 
+  private async showCategoryMenu(
+    instanceName: string,
+    rawNumber: string,
+    companyId: string,
+    categories: { id: string; name: string; services: { id: string }[] }[],
+  ): Promise<void> {
+    const lines = ['*Escolha a categoria:*', ''];
+    categories.forEach((cat, i) => {
+      lines.push(`${i + 1} - ${cat.name}`);
+    });
+    lines.push('', '0 - Voltar ao menu');
+    lines.push('', 'Digite o número da categoria desejada.');
+    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    await this.setState(companyId, rawNumber, 'SELECT_CATEGORY', {
+      categories: categories.map((c) => c.id),
+    } as BookingContext);
+  }
+
+  private async handleCategorySelection(
+    instanceName: string,
+    rawNumber: string,
+    text: string,
+    ctx: BookingContext,
+    companyId: string,
+  ): Promise<void> {
+    const categories = ctx.categories ?? [];
+    const trimmed = text.trim();
+
+    if (trimmed === '0') {
+      await this.showMainMenu(instanceName, rawNumber, companyId);
+      return;
+    }
+
+    const idx = parseInt(trimmed, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= categories.length) {
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
+      return;
+    }
+
+    const selectedCategoryId = categories[idx];
+
+    const services = await this.prisma.service.findMany({
+      where: { companyId, isActive: true, categoryId: selectedCategoryId },
+      select: { id: true, name: true, durationMinutes: true, price: true, schedulingMode: true },
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+    });
+
+    if (services.length === 0) {
+      await this.whatsapp.sendText(instanceName, rawNumber, 'Nenhum serviço disponível nesta categoria.');
+      await this.startBookingFlow(instanceName, rawNumber, companyId);
+      return;
+    }
+
+    const cfg = await this.prisma.whatsappConfig.findUnique({
+      where: { companyId },
+      select: { allowMultipleServices: true },
+    });
+    const multiService = cfg?.allowMultipleServices ?? false;
+
+    const lines: string[] = [];
+    if (multiService) {
+      lines.push('*Escolha os serviços desejados:*', '');
+      lines.push('Você pode selecionar mais de um serviço! Digite os números separados por vírgula.');
+      lines.push('Exemplo: _1,3_ para selecionar o 1º e o 3º serviço.', '');
+    } else {
+      lines.push('*Escolha o serviço:*', '');
+    }
+
+    services.forEach((s, i) => {
+      const price = Number(s.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      lines.push(`${i + 1} - ${s.name} • ${s.durationMinutes} min • ${price}`);
+    });
+    lines.push('', '0 - Voltar às categorias');
+    if (!multiService) lines.push('', 'Digite o número do serviço desejado.');
+
+    await this.whatsapp.sendText(instanceName, rawNumber, lines.join('\n'));
+    await this.setState(companyId, rawNumber, 'SELECT_SERVICE', {
+      selectedCategoryId,
+      categories: ctx.categories,
+      services: services.map((s) => s.id),
+    } as BookingContext);
+  }
+
   private async handleCollaboratorSelection(
     instanceName: string,
     rawNumber: string,
@@ -445,7 +546,11 @@ export class WhatsappClientBotService {
     const trimmed = text.trim();
 
     if (trimmed === '0') {
-      await this.showMainMenu(instanceName, rawNumber, companyId);
+      if (ctx.selectedCategoryId) {
+        await this.startBookingFlow(instanceName, rawNumber, companyId);
+      } else {
+        await this.showMainMenu(instanceName, rawNumber, companyId);
+      }
       return;
     }
 
