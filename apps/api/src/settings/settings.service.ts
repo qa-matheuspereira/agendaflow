@@ -133,6 +133,7 @@ export class SettingsService {
         ...(dto.dailyReminderMessage !== undefined ? { dailyReminderMessage: dto.dailyReminderMessage } : {}),
         ...(dto.skipCollaboratorSelection !== undefined ? { skipCollaboratorSelection: dto.skipCollaboratorSelection } : {}),
         ...(dto.allowMultipleServices !== undefined ? { allowMultipleServices: dto.allowMultipleServices } : {}),
+        ...(dto.aiPersonality !== undefined ? { aiPersonality: dto.aiPersonality } : {}),
       },
     });
 

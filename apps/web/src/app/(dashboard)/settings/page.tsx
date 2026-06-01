@@ -159,6 +159,7 @@ export default function SettingsPage() {
   const [waDailyReminderMessage, setWaDailyReminderMessage] = useState('');
   const [waSkipCollaborator, setWaSkipCollaborator] = useState(false);
   const [waAllowMultipleServices, setWaAllowMultipleServices] = useState(false);
+  const [waAiPersonality, setWaAiPersonality] = useState('');
 
   useEffect(() => {
     if (waConfig) {
@@ -177,6 +178,7 @@ export default function SettingsPage() {
       setWaDailyReminderMessage(waConfig.dailyReminderMessage ?? '');
       setWaSkipCollaborator(waConfig.skipCollaboratorSelection ?? false);
       setWaAllowMultipleServices(waConfig.allowMultipleServices ?? false);
+      setWaAiPersonality((waConfig as unknown as { aiPersonality?: string }).aiPersonality ?? '');
     }
   }, [waConfig]);
 
@@ -210,7 +212,8 @@ export default function SettingsPage() {
         dailyReminderMessage: waDailyReminderMessage,
         skipCollaboratorSelection: waSkipCollaborator,
         allowMultipleServices: waAllowMultipleServices,
-      });
+        aiPersonality: waAiPersonality,
+      } as Parameters<typeof updateWa.mutateAsync>[0]);
       toast.success('Configurações WhatsApp atualizadas!');
     } catch {
       toast.error('Erro ao salvar');
@@ -688,6 +691,21 @@ export default function SettingsPage() {
                       </div>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Personalidade da IA</CardTitle>
+                  <p className="text-sm text-muted-foreground">Define o estilo e tom das respostas automáticas geradas pela IA. Deixe em branco para usar o padrão (simpático e informal).</p>
+                </CardHeader>
+                <CardContent>
+                  <textarea
+                    className="w-full min-h-[100px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    placeholder="Ex: Seja formal e profissional, use tratamento por 'você'. Nunca use gírias ou emojis. Respostas sempre concisas."
+                    value={waAiPersonality}
+                    onChange={(e) => setWaAiPersonality(e.target.value)}
+                  />
                 </CardContent>
               </Card>
 

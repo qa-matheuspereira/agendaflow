@@ -547,6 +547,7 @@ model WhatsappConfig {
   autoConfirmHours    Int     @default(2)
   skipCollaboratorSelection Boolean @default(false)
   allowMultipleServices     Boolean @default(false)
+  aiPersonality       String? @db.Text
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

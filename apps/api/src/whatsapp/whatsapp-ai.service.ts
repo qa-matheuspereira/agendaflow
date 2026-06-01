@@ -24,10 +24,16 @@ function applyPlaceholders(template: string, vars: Record<string, string>): stri
 }
 
 function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
+  const personality = cfg?.aiPersonality?.trim()
+    ? cfg.aiPersonality.trim()
+    : 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação. Respostas curtas, no estilo de conversa de WhatsApp.';
+
   const lines = [
-    'Você é um assistente de agendamento via WhatsApp. Responda sempre em português brasileiro de forma curta e clara (máximo 3-4 linhas por mensagem).',
+    'Você é um assistente de agendamento via WhatsApp. Responda SEMPRE em português brasileiro.',
     '',
-    'Você pode:',
+    `ESTILO DE COMUNICAÇÃO: ${personality}`,
+    '',
+    'CAPACIDADES:',
     '- Listar serviços disponíveis',
     '- Buscar datas e horários disponíveis',
     '- Fazer agendamentos',
@@ -35,17 +41,18 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
     '- Cancelar agendamentos',
     '- Responder perguntas sobre agendamentos (ex: "falta quanto tempo?")',
     '',
-    'Regras importantes:',
-    '- Se não souber o nome do cliente, pergunte antes de qualquer ação e chame register_client_name',
-    '- Use *negrito* apenas para informações importantes',
-    '- Seja direto e amigável',
-    '- Nunca invente IDs — use apenas os retornados pelas ferramentas',
-    '- Quando book_appointment retornar confirmation_message, envie EXATAMENTE esse texto sem modificar',
-    '- Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto sem modificar',
+    'REGRAS OBRIGATÓRIAS:',
+    '1. NUNCA escreva chamadas de função como texto. NUNCA use <function=...> ou similar na resposta.',
+    '2. Use SOMENTE as ferramentas do sistema para buscar dados — nunca invente informações.',
+    '3. Se não souber o nome do cliente, pergunte e chame register_client_name.',
+    '4. Nunca invente IDs — use apenas os retornados pelas ferramentas.',
+    '5. Quando book_appointment retornar confirmation_message, envie EXATAMENTE esse texto.',
+    '6. Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto.',
+    '7. Máximo 4 linhas por resposta.',
   ];
 
   if (cfg?.greetingMessage) {
-    lines.push('', `SAUDAÇÃO INICIAL (use ao cumprimentar pela primeira vez): ${cfg.greetingMessage}`);
+    lines.push('', `SAUDAÇÃO (use ao cumprimentar pela primeira vez): ${cfg.greetingMessage}`);
   }
 
   return lines.join('\n');
@@ -147,7 +154,45 @@ export class WhatsappAiService {
       });
     }
 
-    const finalText = response.choices[0].message.content?.trim() || 'Desculpe, não consegui processar. Pode repetir?';
+    let finalText = response.choices[0].message.content?.trim() || '';
+
+    // Fallback: detect leaked <function=name>{...}</function> patterns and execute them
+    const leakPattern = /<function=(\w+)>([\s\S]*?)<\/function>/g;
+    let leakMatch: RegExpExecArray | null;
+    const leakedCalls: { name: string; args: Record<string, string> }[] = [];
+    while ((leakMatch = leakPattern.exec(finalText)) !== null) {
+      try {
+        leakedCalls.push({ name: leakMatch[1], args: JSON.parse(leakMatch[2]) as Record<string, string> });
+      } catch { /* ignore malformed */ }
+    }
+
+    if (leakedCalls.length > 0) {
+      this.logger.warn(`[AI] Detected ${leakedCalls.length} leaked tool call(s) — executing fallback`);
+      // Remove the leaked function tags from the text
+      finalText = finalText.replace(leakPattern, '').trim();
+
+      // Execute leaked tools and append results to context, then re-call model
+      const leakAssistantMsg: ChatCompletionMessageParam = { role: 'assistant', content: finalText || null, tool_calls: leakedCalls.map((lc, i) => ({ id: `leak_${i}`, type: 'function' as const, function: { name: lc.name, arguments: JSON.stringify(lc.args) } })) };
+      ctx.messages.push(leakAssistantMsg);
+
+      const toolResults: ChatCompletionMessageParam[] = [];
+      for (const lc of leakedCalls) {
+        const result = await this.executeTool(lc.name, lc.args, companyId, ctx);
+        toolResults.push({ role: 'tool', tool_call_id: `leak_${leakedCalls.indexOf(lc)}`, content: JSON.stringify(result) });
+      }
+      ctx.messages.push(...toolResults);
+
+      const retryResponse = await this.groq!.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'system', content: buildSystemPrompt(ctx.config) }, ...ctx.messages],
+        max_tokens: 512,
+        temperature: 0.3,
+      });
+      finalText = retryResponse.choices[0].message.content?.trim() || 'Desculpe, tente novamente.';
+    }
+
+    if (!finalText) finalText = 'Desculpe, não consegui processar. Pode repetir?';
+
     ctx.messages.push({ role: 'assistant', content: finalText });
 
     await this.whatsapp.sendText(instanceName, sendNumber, finalText);
