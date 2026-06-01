@@ -4,12 +4,13 @@ import { WhatsappService } from './whatsapp.service';
 import { WhatsappInboundService } from './whatsapp-inbound.service';
 import { WhatsappClientBotService } from './whatsapp-client-bot.service';
 import { WhatsappCollaboratorBotService } from './whatsapp-collaborator-bot.service';
+import { WhatsappAiService } from './whatsapp-ai.service';
 import { ScheduleEngineModule } from '@/schedule-engine/schedule-engine.module';
 
 @Module({
   imports: [ScheduleEngineModule],
   controllers: [WhatsappController],
-  providers: [WhatsappService, WhatsappInboundService, WhatsappClientBotService, WhatsappCollaboratorBotService],
+  providers: [WhatsappService, WhatsappInboundService, WhatsappClientBotService, WhatsappCollaboratorBotService, WhatsappAiService],
   exports: [WhatsappService],
 })
 export class WhatsappModule {}

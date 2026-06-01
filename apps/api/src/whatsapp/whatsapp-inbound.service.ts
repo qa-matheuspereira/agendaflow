@@ -3,6 +3,7 @@ import { PrismaService } from '@/core/database/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { WhatsappClientBotService } from './whatsapp-client-bot.service';
 import { WhatsappCollaboratorBotService } from './whatsapp-collaborator-bot.service';
+import { WhatsappAiService } from './whatsapp-ai.service';
 import type { EvolutionMessageData, EvolutionAckData } from './interfaces/evolution-payload.interface';
 
 const CONVERSATION_TTL_MS = 30 * 60 * 1000;
@@ -69,6 +70,7 @@ export class WhatsappInboundService {
     private readonly whatsapp: WhatsappService,
     private readonly clientBot: WhatsappClientBotService,
     private readonly collaboratorBot: WhatsappCollaboratorBotService,
+    private readonly aiService: WhatsappAiService,
   ) {}
 
   async processMessage(instanceName: string, data: EvolutionMessageData): Promise<void> {
@@ -240,6 +242,39 @@ export class WhatsappInboundService {
         state,
         config.companyId,
       );
+      return;
+    }
+
+    // ── AI interpreter (staging / when GROQ_API_KEY is set) ──────────────────
+    if (this.aiService.isEnabled) {
+      const aiCtx = (state.context ?? {}) as Record<string, unknown>;
+      const resolvedClientId = client?.id ?? (aiCtx.clientId as string | undefined) ?? null;
+      const resolvedClientName = client?.name !== 'Cliente WhatsApp' ? (client?.name ?? null) : null;
+
+      try {
+        const updatedCtx = await this.aiService.handle(
+          instanceName,
+          sendNumber,
+          lookupNumber,
+          messageText,
+          config.companyId,
+          aiCtx,
+          resolvedClientId,
+          resolvedClientName,
+        );
+
+        await this.prisma.conversationState.update({
+          where: { companyId_whatsappNumber: { companyId: config.companyId, whatsappNumber: lookupNumber } },
+          data: {
+            currentStep: 'AI_CONVERSATION',
+            context: { ...updatedCtx, lastMessageId: messageId },
+            expiresAt: conversationExpiresAt(),
+          },
+        });
+      } catch (err) {
+        this.logger.error(`AI handler error: ${err}`);
+        await this.whatsapp.sendText(instanceName, sendNumber, 'Desculpe, ocorreu um erro. Tente novamente em instantes.');
+      }
       return;
     }
 
