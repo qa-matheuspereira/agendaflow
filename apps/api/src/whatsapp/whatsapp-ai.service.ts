@@ -3,35 +3,53 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/core/database/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { ScheduleEngineService } from '@/schedule-engine/schedule-engine.service';
-import { AppointmentStatus, Prisma } from '@prisma/client';
+import { AppointmentStatus, Prisma, type WhatsappConfig } from '@prisma/client';
 import Groq from 'groq-sdk';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'groq-sdk/resources/chat/completions';
+import { differenceInMinutes } from 'date-fns';
 
 interface AiContext {
   messages: ChatCompletionMessageParam[];
   clientId?: string;
   clientName?: string;
   whatsappNumber: string;
+  config?: WhatsappConfig | null;
 }
 
 const MAX_HISTORY = 12;
 const TOOL_LOOP_LIMIT = 6;
 
-const SYSTEM_PROMPT = `Você é um assistente de agendamento via WhatsApp. Responda sempre em português brasileiro de forma curta e clara (máximo 3-4 linhas por mensagem).
+function applyPlaceholders(template: string, vars: Record<string, string>): string {
+  return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
+}
 
-Você pode:
-- Listar serviços disponíveis
-- Buscar datas e horários disponíveis
-- Fazer agendamentos
-- Listar agendamentos do cliente
-- Cancelar agendamentos
+function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
+  const lines = [
+    'Você é um assistente de agendamento via WhatsApp. Responda sempre em português brasileiro de forma curta e clara (máximo 3-4 linhas por mensagem).',
+    '',
+    'Você pode:',
+    '- Listar serviços disponíveis',
+    '- Buscar datas e horários disponíveis',
+    '- Fazer agendamentos',
+    '- Listar agendamentos do cliente',
+    '- Cancelar agendamentos',
+    '- Responder perguntas sobre agendamentos (ex: "falta quanto tempo?")',
+    '',
+    'Regras importantes:',
+    '- Se não souber o nome do cliente, pergunte antes de qualquer ação e chame register_client_name',
+    '- Use *negrito* apenas para informações importantes',
+    '- Seja direto e amigável',
+    '- Nunca invente IDs — use apenas os retornados pelas ferramentas',
+    '- Quando book_appointment retornar confirmation_message, envie EXATAMENTE esse texto sem modificar',
+    '- Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto sem modificar',
+  ];
 
-Regras importantes:
-- Se não souber o nome do cliente, pergunte antes de qualquer ação e chame register_client_name com a resposta
-- Ao confirmar um agendamento, mostre: serviço, data (DD/MM/AAAA), horário e profissional
-- Use *negrito* apenas para informações importantes
-- Seja direto e amigável
-- Nunca invente IDs — use apenas os retornados pelas ferramentas`;
+  if (cfg?.greetingMessage) {
+    lines.push('', `SAUDAÇÃO INICIAL (use ao cumprimentar pela primeira vez): ${cfg.greetingMessage}`);
+  }
+
+  return lines.join('\n');
+}
 
 @Injectable()
 export class WhatsappAiService {
@@ -67,11 +85,14 @@ export class WhatsappAiService {
   ): Promise<Record<string, unknown>> {
     if (!this.groq) throw new Error('Groq not initialized');
 
+    const waCfg = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
+
     const ctx: AiContext = {
       messages: (existingContext.messages as ChatCompletionMessageParam[] | undefined) ?? [],
       clientId: clientId ?? undefined,
       clientName: clientName ?? undefined,
       whatsappNumber,
+      config: waCfg,
     };
 
     if (ctx.messages.length > MAX_HISTORY) {
@@ -80,10 +101,12 @@ export class WhatsappAiService {
 
     ctx.messages.push({ role: 'user', content: messageText });
 
+    const systemPrompt = buildSystemPrompt(waCfg);
     const tools = this.buildTools();
+
     let response = await this.groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...ctx.messages],
+      messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
       tools,
       tool_choice: 'auto',
       max_tokens: 512,
@@ -116,7 +139,7 @@ export class WhatsappAiService {
 
       response = await this.groq.chat.completions.create({
         model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...ctx.messages],
+        messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
         tools,
         tool_choice: 'auto',
         max_tokens: 512,
@@ -225,6 +248,14 @@ export class WhatsappAiService {
           },
         },
       },
+      {
+        type: 'function',
+        function: {
+          name: 'get_next_appointment_info',
+          description: 'Retorna informações do próximo agendamento do cliente incluindo tempo restante. Use para responder "falta quanto tempo?", "quando é meu horário?" etc.',
+          parameters: { type: 'object', properties: {}, required: [] },
+        },
+      },
     ];
   }
 
@@ -254,10 +285,7 @@ export class WhatsappAiService {
         const services = await this.prisma.service.findMany({
           where: { companyId, isActive: true },
           select: {
-            id: true,
-            name: true,
-            durationMinutes: true,
-            price: true,
+            id: true, name: true, durationMinutes: true, price: true,
             category: { select: { name: true } },
           },
           orderBy: [{ order: 'asc' }, { name: 'asc' }],
@@ -278,20 +306,15 @@ export class WhatsappAiService {
         const end = new Date(now);
         end.setDate(end.getDate() + 6);
         try {
-          const dates = await this.scheduleEngine.getAvailableDatesInRange(
-            companyId,
-            args.service_id,
-            undefined,
-            now,
-            end,
-          );
-          const formatted = dates.map((d) => {
-            const [y, m, day] = d.split('-');
-            return { date_iso: d, date_br: `${day}/${m}/${y}` };
-          });
-          return { available_dates: formatted };
+          const dates = await this.scheduleEngine.getAvailableDatesInRange(companyId, args.service_id, undefined, now, end);
+          return {
+            available_dates: dates.map((d) => {
+              const [y, m, day] = d.split('-');
+              return { date_iso: d, date_br: `${day}/${m}/${y}` };
+            }),
+          };
         } catch (e) {
-          this.logger.error(`get_available_dates error: ${e}`);
+          this.logger.error(`get_available_dates: ${e}`);
           return { error: 'Erro ao buscar datas.' };
         }
       }
@@ -305,44 +328,29 @@ export class WhatsappAiService {
           } as Parameters<ScheduleEngineService['getAvailableSlots']>[1]);
           return { available_slots: all.filter((s) => s.available).map((s) => s.time) };
         } catch (e) {
-          this.logger.error(`get_available_slots error: ${e}`);
+          this.logger.error(`get_available_slots: ${e}`);
           return { error: 'Erro ao buscar horários.' };
         }
       }
 
       case 'book_appointment': {
         if (!ctx.clientId) return { error: 'Preciso do seu nome antes de agendar. Qual é o seu nome?' };
-        if (!args.service_id || !args.date || !args.time) {
-          return { error: 'Informe serviço, data e horário.' };
-        }
+        if (!args.service_id || !args.date || !args.time) return { error: 'Informe serviço, data e horário.' };
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
         const dateStart = new Date(args.date + 'T00:00:00.000Z');
         const dateEnd = new Date(args.date + 'T23:59:59.999Z');
 
         const collabs = await this.prisma.collaborator.findMany({
-          where: {
-            companyId,
-            isActive: true,
-            services: { some: { serviceId: args.service_id } },
-          },
+          where: { companyId, isActive: true, services: { some: { serviceId: args.service_id } } },
           select: {
-            id: true,
-            name: true,
+            id: true, name: true,
             appointments: {
-              where: {
-                scheduledDate: { gte: dateStart, lte: dateEnd },
-                status: { notIn: [AppointmentStatus.CANCELLED] },
-              },
+              where: { scheduledDate: { gte: dateStart, lte: dateEnd }, status: { notIn: [AppointmentStatus.CANCELLED] } },
               select: { id: true },
             },
           },
         });
-
-        if (collabs.length === 0) {
-          return { error: 'Nenhum profissional disponível para este serviço.' };
-        }
+        if (collabs.length === 0) return { error: 'Nenhum profissional disponível para este serviço.' };
         collabs.sort((a, b) => a.appointments.length - b.appointments.length);
         const collab = collabs[0];
 
@@ -360,8 +368,7 @@ export class WhatsappAiService {
           await this.prisma.$transaction(async (tx) => {
             const conflict = await tx.appointment.findFirst({
               where: {
-                companyId,
-                collaboratorId: collab.id,
+                companyId, collaboratorId: collab.id,
                 scheduledDate: new Date(args.date + 'T00:00:00.000Z'),
                 scheduledTime: args.time,
                 status: { notIn: [AppointmentStatus.CANCELLED] },
@@ -370,13 +377,10 @@ export class WhatsappAiService {
             if (conflict) throw new Error('SLOT_TAKEN');
             await tx.appointment.create({
               data: {
-                companyId,
-                clientId: ctx.clientId!,
-                collaboratorId: collab.id,
+                companyId, clientId: ctx.clientId!, collaboratorId: collab.id,
                 serviceId: args.service_id,
                 scheduledDate: new Date(args.date + 'T00:00:00.000Z'),
-                scheduledTime: args.time,
-                endTime,
+                scheduledTime: args.time, endTime,
                 status: AppointmentStatus.SCHEDULED,
                 createdViaBot: true,
               },
@@ -384,13 +388,18 @@ export class WhatsappAiService {
           }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
           const [y, m, d] = args.date.split('-');
-          return {
-            success: true,
-            service: service.name,
-            date: `${d}/${m}/${y}`,
-            time: args.time,
-            collaborator: collab.name,
-          };
+          const dateFormatted = `${d}/${m}/${y}`;
+          const clientName = ctx.clientName ?? 'Cliente';
+
+          const customMsg = ctx.config?.scheduleConfirmMsg?.trim();
+          const confirmation_message = customMsg
+            ? applyPlaceholders(customMsg, {
+                nome: clientName, servico: service.name,
+                horario: args.time, profissional: collab.name, data: dateFormatted,
+              })
+            : `*Agendamento confirmado!*\n\nData: ${dateFormatted}\nHorário: ${args.time}\nServiço: ${service.name}\nProfissional: ${collab.name}`;
+
+          return { success: true, confirmation_message };
         } catch {
           return { error: 'Horário indisponível ou já reservado. Tente outro horário.' };
         }
@@ -402,8 +411,7 @@ export class WhatsappAiService {
         today.setUTCHours(0, 0, 0, 0);
         const appts = await this.prisma.appointment.findMany({
           where: {
-            companyId,
-            clientId: ctx.clientId,
+            companyId, clientId: ctx.clientId,
             scheduledDate: { gte: today },
             status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED] },
           },
@@ -431,7 +439,10 @@ export class WhatsappAiService {
         if (!args.appointment_id) return { error: 'appointment_id obrigatório.' };
         const appt = await this.prisma.appointment.findFirst({
           where: { id: args.appointment_id, companyId, clientId: ctx.clientId },
-          include: { service: { select: { name: true } } },
+          include: {
+            service: { select: { name: true } },
+            collaborator: { select: { name: true } },
+          },
         });
         if (!appt) return { error: 'Agendamento não encontrado.' };
         if (!['SCHEDULED', 'CONFIRMED'].includes(appt.status)) {
@@ -439,13 +450,72 @@ export class WhatsappAiService {
         }
         await this.prisma.appointment.update({
           where: { id: args.appointment_id },
-          data: {
-            status: AppointmentStatus.CANCELLED,
-            cancelledAt: new Date(),
-            cancelReason: 'Cancelado pelo cliente via WhatsApp',
-          },
+          data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelReason: 'Cancelado pelo cliente via WhatsApp' },
         });
-        return { success: true, service: appt.service.name };
+
+        const dateFormatted = appt.scheduledDate.toISOString().slice(0, 10).split('-').reverse().join('/');
+        const clientName = ctx.clientName ?? 'Cliente';
+
+        const customMsg = ctx.config?.cancellationMessage?.trim();
+        const cancellation_message = customMsg
+          ? applyPlaceholders(customMsg, {
+              nome: clientName, servico: appt.service.name,
+              horario: appt.scheduledTime, profissional: appt.collaborator.name, data: dateFormatted,
+            })
+          : `*Agendamento cancelado!*\n\n${dateFormatted} às ${appt.scheduledTime}\n${appt.service.name} com ${appt.collaborator.name}`;
+
+        return { success: true, cancellation_message };
+      }
+
+      case 'get_next_appointment_info': {
+        if (!ctx.clientId) return { error: 'Cliente não identificado.' };
+        const now = new Date();
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+
+        const appt = await this.prisma.appointment.findFirst({
+          where: {
+            companyId, clientId: ctx.clientId,
+            scheduledDate: { gte: today },
+            status: { in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED] },
+          },
+          include: {
+            service: { select: { name: true } },
+            collaborator: { select: { name: true } },
+          },
+          orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
+        });
+
+        if (!appt) return { found: false, message: 'Nenhum agendamento futuro encontrado.' };
+
+        const dateStr = appt.scheduledDate.toISOString().slice(0, 10);
+        const apptDateTime = new Date(`${dateStr}T${appt.scheduledTime}:00`);
+        const minutesUntil = differenceInMinutes(apptDateTime, now);
+        const hoursUntil = Math.floor(minutesUntil / 60);
+        const minsRemaining = minutesUntil % 60;
+
+        let timeLabel = '';
+        if (minutesUntil < 0) {
+          timeLabel = 'já passou';
+        } else if (minutesUntil < 60) {
+          timeLabel = `${minutesUntil} minuto${minutesUntil !== 1 ? 's' : ''}`;
+        } else {
+          timeLabel = `${hoursUntil}h${minsRemaining > 0 ? ` e ${minsRemaining}min` : ''}`;
+        }
+
+        const reminderInfo = ctx.config?.reminderHoursBefore
+          ? `Lembrete será enviado ${ctx.config.reminderHoursBefore} minutos antes.`
+          : null;
+
+        return {
+          found: true,
+          date: dateStr.split('-').reverse().join('/'),
+          time: appt.scheduledTime,
+          service: appt.service.name,
+          collaborator: appt.collaborator.name,
+          time_until: timeLabel,
+          reminder_info: reminderInfo,
+        };
       }
 
       default:
