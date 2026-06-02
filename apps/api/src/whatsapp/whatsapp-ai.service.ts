@@ -4,22 +4,24 @@ import { PrismaService } from '@/core/database/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { ScheduleEngineService } from '@/schedule-engine/schedule-engine.service';
 import { AppointmentStatus, Prisma, type WhatsappConfig } from '@prisma/client';
-import { GoogleGenerativeAI, type Content, SchemaType } from '@google/generative-ai';
+import Groq from 'groq-sdk';
+import type { ChatCompletionMessageParam, ChatCompletionTool } from 'groq-sdk/resources/chat/completions';
 import { differenceInMinutes } from 'date-fns';
 
 interface AiContext {
-  history: Content[];
+  messages: ChatCompletionMessageParam[];
   clientId?: string;
   clientName?: string;
   whatsappNumber: string;
   config?: WhatsappConfig | null;
 }
 
-const MAX_HISTORY = 20;
+const MAX_HISTORY = 12;
 const TOOL_LOOP_LIMIT = 6;
+const GROQ_MODEL = 'llama-3.1-8b-instant';
 
 function applyPlaceholders(template: string, vars: Record<string, string>): string {
-  return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
+  return template.replace(/[{｛]\s*(\w+)\s*[}｛]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
 }
 
 function todayIso(): string {
@@ -30,45 +32,36 @@ function todayIso(): string {
 function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
   const personality = cfg?.aiPersonality?.trim()
     || 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação. Respostas curtas, no estilo de conversa de WhatsApp.';
-
   const today = todayIso();
-  const lines = [
+  return [
     'Você é um assistente de agendamento via WhatsApp. Responda SEMPRE em português brasileiro.',
-    `Data de hoje: ${today}. Use essa data para interpretar "hoje", "amanhã", "semana que vem", etc.`,
+    `Data de hoje: ${today}. Use para interpretar "hoje", "amanhã", "semana que vem", etc.`,
     '',
-    `ESTILO DE COMUNICAÇÃO: ${personality}`,
-    '',
-    'CAPACIDADES:',
-    '- Listar serviços disponíveis',
-    '- Buscar datas e horários disponíveis',
-    '- Fazer agendamentos',
-    '- Listar agendamentos do cliente',
-    '- Cancelar agendamentos',
-    '- Responder perguntas sobre agendamentos (ex: "falta quanto tempo?")',
+    `ESTILO: ${personality}`,
     '',
     'REGRAS:',
-    '1. Use SOMENTE as ferramentas para buscar dados — nunca invente informações.',
+    '1. Use SOMENTE as ferramentas para buscar dados — nunca invente.',
     '2. Se não souber o nome do cliente, pergunte e chame register_client_name.',
     '3. Nunca invente IDs — use apenas os retornados pelas ferramentas.',
     '4. Quando book_appointment retornar confirmation_message, envie EXATAMENTE esse texto.',
     '5. Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto.',
-    '6. Ao listar horários, use lista numerada: 1 - 08:00, 2 - 08:30, etc.',
-    '7. Ao listar datas, mostre DD/MM com dia da semana: ex "02/06 (Seg)".',
-    '8. Datas para book_appointment SEMPRE em YYYY-MM-DD. Horários SEMPRE em HH:MM.',
+    '6. Horários: lista numerada (1 - 08:00, 2 - 08:30...).',
+    '7. Datas: DD/MM com dia da semana (02/06 (Seg)).',
+    '8. Datas para book_appointment SEMPRE YYYY-MM-DD. Horários SEMPRE HH:MM.',
     '9. Máximo 4 linhas por resposta, exceto ao listar horários/datas.',
-  ];
+    cfg?.greetingMessage ? `\nSAUDAÇÃO INICIAL: ${cfg.greetingMessage}` : '',
+  ].filter(Boolean).join('\n');
+}
 
-  if (cfg?.greetingMessage) {
-    lines.push('', `SAUDAÇÃO (use ao cumprimentar pela primeira vez): ${cfg.greetingMessage}`);
-  }
-
-  return lines.join('\n');
+function extractRetryMs(errorMessage: string): number {
+  const match = errorMessage.match(/try again in (\d+(?:\.\d+)?)s/i);
+  return match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 20000;
 }
 
 @Injectable()
 export class WhatsappAiService {
   private readonly logger = new Logger(WhatsappAiService.name);
-  private readonly genAI: GoogleGenerativeAI | null = null;
+  private readonly groq: Groq | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -76,18 +69,33 @@ export class WhatsappAiService {
     private readonly scheduleEngine: ScheduleEngineService,
     private readonly config: ConfigService,
   ) {
-    const apiKey = this.config.get<string>('GOOGLE_AI_API_KEY');
+    const apiKey = this.config.get<string>('GROQ_API_KEY');
     if (apiKey) {
-      this.genAI = new GoogleGenerativeAI(apiKey);
-      this.logger.log('Google Gemini AI interpreter enabled');
-    } else {
-      const groqKey = this.config.get<string>('GROQ_API_KEY');
-      if (groqKey) this.logger.warn('GROQ_API_KEY set but Gemini preferred — set GOOGLE_AI_API_KEY');
+      this.groq = new Groq({ apiKey });
+      this.logger.log('Groq AI interpreter enabled');
     }
   }
 
   get isEnabled(): boolean {
-    return !!this.genAI;
+    return !!this.groq;
+  }
+
+  private async groqCreate(
+    params: Parameters<Groq['chat']['completions']['create']>[0],
+    retries = 3,
+  ): Promise<Groq.Chat.ChatCompletion> {
+    try {
+      return await this.groq!.chat.completions.create(params) as Groq.Chat.ChatCompletion;
+    } catch (err: unknown) {
+      const error = err as { status?: number; message?: string };
+      if (error?.status === 429 && retries > 0) {
+        const waitMs = extractRetryMs(error?.message ?? '');
+        this.logger.warn(`[AI] Rate limited — waiting ${waitMs}ms then retrying (${retries} retries left)`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        return this.groqCreate(params, retries - 1);
+      }
+      throw err;
+    }
   }
 
   async handle(
@@ -100,151 +108,111 @@ export class WhatsappAiService {
     clientId: string | null,
     clientName: string | null,
   ): Promise<Record<string, unknown>> {
-    if (!this.genAI) throw new Error('Gemini not initialized');
+    if (!this.groq) throw new Error('Groq not initialized');
 
     const waCfg = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
 
     const ctx: AiContext = {
-      history: (existingContext.history as Content[] | undefined) ?? [],
+      messages: (existingContext.messages as ChatCompletionMessageParam[] | undefined) ?? [],
       clientId: clientId ?? undefined,
       clientName: clientName ?? undefined,
       whatsappNumber,
       config: waCfg,
     };
 
-    if (ctx.history.length > MAX_HISTORY) {
-      ctx.history = ctx.history.slice(-MAX_HISTORY);
-    }
+    if (ctx.messages.length > MAX_HISTORY) ctx.messages = ctx.messages.slice(-MAX_HISTORY);
 
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash-latest',
-      systemInstruction: buildSystemPrompt(waCfg),
-      tools: [{ functionDeclarations: this.buildFunctionDeclarations() }],
+    ctx.messages.push({ role: 'user', content: messageText });
+
+    const systemPrompt = buildSystemPrompt(waCfg);
+    const tools = this.buildTools();
+
+    let response = await this.groqCreate({
+      model: GROQ_MODEL,
+      messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
+      tools,
+      tool_choice: 'auto',
+      max_tokens: 512,
+      temperature: 0.3,
     });
 
-    const chat = model.startChat({ history: ctx.history });
-
-    let result = await chat.sendMessage(messageText);
-    ctx.history.push({ role: 'user', parts: [{ text: messageText }] });
-
     let loops = 0;
-    while (loops < TOOL_LOOP_LIMIT) {
-      const calls = result.response.functionCalls();
-      if (!calls || calls.length === 0) break;
+    while (response.choices[0].finish_reason === 'tool_calls' && loops < TOOL_LOOP_LIMIT) {
       loops++;
+      const assistantMsg = response.choices[0].message;
+      ctx.messages.push(assistantMsg as ChatCompletionMessageParam);
 
-      this.logger.debug(`[AI] ${calls.length} tool call(s): ${calls.map((c) => c.name).join(', ')}`);
-
-      const modelParts = result.response.candidates?.[0]?.content?.parts ?? [];
-      ctx.history.push({ role: 'model', parts: modelParts });
-
-      const toolResponseParts: Content['parts'] = [];
-      for (const call of calls) {
-        const toolResult = await this.executeTool(call.name, call.args as Record<string, string>, companyId, ctx);
-        toolResponseParts.push({
-          functionResponse: { name: call.name, response: toolResult as Record<string, unknown> },
-        });
+      const toolResults: ChatCompletionMessageParam[] = [];
+      for (const toolCall of assistantMsg.tool_calls ?? []) {
+        let args: Record<string, string> = {};
+        try { args = JSON.parse(toolCall.function.arguments) as Record<string, string>; } catch { args = {}; }
+        const result = await this.executeTool(toolCall.function.name, args, companyId, ctx);
+        toolResults.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify(result) });
       }
+      ctx.messages.push(...toolResults);
 
-      ctx.history.push({ role: 'user', parts: toolResponseParts });
-      result = await chat.sendMessage(toolResponseParts);
+      response = await this.groqCreate({
+        model: GROQ_MODEL,
+        messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
+        tools,
+        tool_choice: 'auto',
+        max_tokens: 512,
+        temperature: 0.3,
+      });
     }
 
-    const finalText = result.response.text()?.trim() || 'Desculpe, não consegui processar. Pode repetir?';
-    ctx.history.push({ role: 'model', parts: [{ text: finalText }] });
+    let finalText = response.choices[0].message.content?.trim() || '';
 
+    // Fallback: detect leaked <function=name>{...}</function> and execute
+    const leakRe = /<function=(\w+)>([\s\S]*?)<\/function>/g;
+    const leaked: { name: string; args: Record<string, string> }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = leakRe.exec(finalText)) !== null) {
+      try { leaked.push({ name: m[1], args: JSON.parse(m[2]) as Record<string, string> }); } catch { /* skip */ }
+    }
+    if (leaked.length > 0) {
+      this.logger.warn(`[AI] ${leaked.length} leaked tool call(s) — executing fallback`);
+      finalText = finalText.replace(/<function=\w+>[\s\S]*?<\/function>/g, '').trim();
+      const assistantPart: ChatCompletionMessageParam = {
+        role: 'assistant', content: finalText || null,
+        tool_calls: leaked.map((lc, i) => ({ id: `leak_${i}`, type: 'function' as const, function: { name: lc.name, arguments: JSON.stringify(lc.args) } })),
+      };
+      ctx.messages.push(assistantPart);
+      const leakResults: ChatCompletionMessageParam[] = [];
+      for (let i = 0; i < leaked.length; i++) {
+        const result = await this.executeTool(leaked[i].name, leaked[i].args, companyId, ctx);
+        leakResults.push({ role: 'tool', tool_call_id: `leak_${i}`, content: JSON.stringify(result) });
+      }
+      ctx.messages.push(...leakResults);
+      const retry = await this.groqCreate({
+        model: GROQ_MODEL,
+        messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
+        max_tokens: 512, temperature: 0.3,
+      });
+      finalText = retry.choices[0].message.content?.trim() || '';
+    }
+
+    if (!finalText) finalText = 'Desculpe, não consegui processar. Pode repetir?';
+    ctx.messages.push({ role: 'assistant', content: finalText });
     await this.whatsapp.sendText(instanceName, sendNumber, finalText);
 
-    return {
-      history: ctx.history.slice(-MAX_HISTORY),
-      clientId: ctx.clientId,
-      clientName: ctx.clientName,
-    };
+    return { messages: ctx.messages.slice(-MAX_HISTORY), clientId: ctx.clientId, clientName: ctx.clientName };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private buildFunctionDeclarations(): any[] {
+  private buildTools(): ChatCompletionTool[] {
     return [
-      {
-        name: 'register_client_name',
-        description: 'Registra o nome do cliente quando ele informa o nome pela primeira vez',
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: { name: { type: SchemaType.STRING, description: 'Nome completo do cliente' } },
-          required: ['name'],
-        },
-      },
-      {
-        name: 'list_services',
-        description: 'Lista todos os serviços disponíveis para agendamento',
-        parameters: { type: SchemaType.OBJECT, properties: {} },
-      },
-      {
-        name: 'get_available_dates',
-        description: 'Busca datas disponíveis nos próximos 7 dias para um serviço',
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            service_id: { type: SchemaType.STRING, description: 'ID do serviço retornado por list_services' },
-          },
-          required: ['service_id'],
-        },
-      },
-      {
-        name: 'get_available_slots',
-        description: 'Busca horários disponíveis para um serviço em uma data',
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            service_id: { type: SchemaType.STRING, description: 'ID do serviço' },
-            date: { type: SchemaType.STRING, description: 'Data no formato YYYY-MM-DD' },
-          },
-          required: ['service_id', 'date'],
-        },
-      },
-      {
-        name: 'book_appointment',
-        description: 'Cria um agendamento confirmado para o cliente',
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            service_id: { type: SchemaType.STRING, description: 'ID do serviço' },
-            date: { type: SchemaType.STRING, description: 'Data no formato YYYY-MM-DD' },
-            time: { type: SchemaType.STRING, description: 'Horário no formato HH:MM' },
-          },
-          required: ['service_id', 'date', 'time'],
-        },
-      },
-      {
-        name: 'list_my_appointments',
-        description: 'Lista os próximos agendamentos do cliente',
-        parameters: { type: SchemaType.OBJECT, properties: {} },
-      },
-      {
-        name: 'cancel_appointment',
-        description: 'Cancela um agendamento do cliente pelo ID',
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            appointment_id: { type: SchemaType.STRING, description: 'ID do agendamento retornado por list_my_appointments' },
-          },
-          required: ['appointment_id'],
-        },
-      },
-      {
-        name: 'get_next_appointment_info',
-        description: 'Retorna o próximo agendamento do cliente e tempo restante. Use para "falta quanto tempo?", "quando é meu horário?" etc.',
-        parameters: { type: SchemaType.OBJECT, properties: {} },
-      },
+      { type: 'function', function: { name: 'register_client_name', description: 'Registra o nome do cliente', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+      { type: 'function', function: { name: 'list_services', description: 'Lista serviços disponíveis', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'get_available_dates', description: 'Busca datas disponíveis nos próximos 7 dias para um serviço', parameters: { type: 'object', properties: { service_id: { type: 'string' } }, required: ['service_id'] } } },
+      { type: 'function', function: { name: 'get_available_slots', description: 'Busca horários disponíveis para um serviço em uma data', parameters: { type: 'object', properties: { service_id: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['service_id', 'date'] } } },
+      { type: 'function', function: { name: 'book_appointment', description: 'Cria agendamento para o cliente', parameters: { type: 'object', properties: { service_id: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD' }, time: { type: 'string', description: 'HH:MM' } }, required: ['service_id', 'date', 'time'] } } },
+      { type: 'function', function: { name: 'list_my_appointments', description: 'Lista próximos agendamentos do cliente', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'cancel_appointment', description: 'Cancela agendamento pelo ID', parameters: { type: 'object', properties: { appointment_id: { type: 'string' } }, required: ['appointment_id'] } } },
+      { type: 'function', function: { name: 'get_next_appointment_info', description: 'Retorna próximo agendamento e tempo restante. Use para "falta quanto tempo?", "quando é meu horário?"', parameters: { type: 'object', properties: {}, required: [] } } },
     ];
   }
 
-  private async executeTool(
-    toolName: string,
-    args: Record<string, string>,
-    companyId: string,
-    ctx: AiContext,
-  ): Promise<unknown> {
+  private async executeTool(toolName: string, args: Record<string, string>, companyId: string, ctx: AiContext): Promise<unknown> {
     this.logger.debug(`[AI] tool=${toolName} clientId=${ctx.clientId}`);
 
     switch (toolName) {
@@ -267,12 +235,7 @@ export class WhatsappAiService {
           select: { id: true, name: true, durationMinutes: true, price: true, category: { select: { name: true } } },
           orderBy: [{ order: 'asc' }, { name: 'asc' }],
         });
-        return services.map((s) => ({
-          id: s.id, name: s.name,
-          duration_minutes: s.durationMinutes,
-          price: `R$ ${Number(s.price).toFixed(2).replace('.', ',')}`,
-          category: s.category?.name ?? null,
-        }));
+        return services.map((s) => ({ id: s.id, name: s.name, duration_minutes: s.durationMinutes, price: `R$ ${Number(s.price).toFixed(2).replace('.', ',')}`, category: s.category?.name ?? null }));
       }
 
       case 'get_available_dates': {
@@ -281,79 +244,47 @@ export class WhatsappAiService {
         const end = new Date(now); end.setDate(end.getDate() + 6);
         try {
           const dates = await this.scheduleEngine.getAvailableDatesInRange(companyId, args.service_id, undefined, now, end);
-          return { available_dates: dates.map((d) => { const [y, m, day] = d.split('-'); return { date_iso: d, date_br: `${day}/${m}/${y}` }; }) };
-        } catch (e) {
-          this.logger.error(`get_available_dates: ${e}`);
-          return { error: 'Erro ao buscar datas.' };
-        }
+          return { available_dates: dates.map((d) => { const [y, mo, da] = d.split('-'); return { date_iso: d, date_br: `${da}/${mo}/${y}` }; }) };
+        } catch (e) { this.logger.error(`get_available_dates: ${e}`); return { error: 'Erro ao buscar datas.' }; }
       }
 
       case 'get_available_slots': {
         if (!args.service_id || !args.date) return { error: 'service_id e date obrigatórios' };
         try {
-          const all = await this.scheduleEngine.getAvailableSlots(companyId, {
-            date: args.date, serviceId: args.service_id,
-          } as Parameters<ScheduleEngineService['getAvailableSlots']>[1]);
+          const all = await this.scheduleEngine.getAvailableSlots(companyId, { date: args.date, serviceId: args.service_id } as Parameters<ScheduleEngineService['getAvailableSlots']>[1]);
           return { available_slots: all.filter((s) => s.available).map((s) => s.time) };
-        } catch (e) {
-          this.logger.error(`get_available_slots: ${e}`);
-          return { error: 'Erro ao buscar horários.' };
-        }
+        } catch (e) { this.logger.error(`get_available_slots: ${e}`); return { error: 'Erro ao buscar horários.' }; }
       }
 
       case 'book_appointment': {
         if (!ctx.clientId) return { error: 'Preciso do seu nome antes de agendar. Qual é o seu nome?' };
         if (!args.service_id || !args.date || !args.time) return { error: 'Informe serviço, data e horário.' };
-
-        const dateStart = new Date(args.date + 'T00:00:00.000Z');
-        const dateEnd = new Date(args.date + 'T23:59:59.999Z');
-
         const collabs = await this.prisma.collaborator.findMany({
           where: { companyId, isActive: true, services: { some: { serviceId: args.service_id } } },
-          select: {
-            id: true, name: true,
-            appointments: {
-              where: { scheduledDate: { gte: dateStart, lte: dateEnd }, status: { notIn: [AppointmentStatus.CANCELLED] } },
-              select: { id: true },
-            },
-          },
+          select: { id: true, name: true, appointments: { where: { scheduledDate: { gte: new Date(args.date + 'T00:00:00.000Z'), lte: new Date(args.date + 'T23:59:59.999Z') }, status: { notIn: [AppointmentStatus.CANCELLED] } }, select: { id: true } } },
         });
-        if (collabs.length === 0) return { error: 'Nenhum profissional disponível para este serviço.' };
+        if (collabs.length === 0) return { error: 'Nenhum profissional disponível.' };
         collabs.sort((a, b) => a.appointments.length - b.appointments.length);
         const collab = collabs[0];
-
-        const service = await this.prisma.service.findUnique({
-          where: { id: args.service_id }, select: { name: true, durationMinutes: true },
-        });
+        const service = await this.prisma.service.findUnique({ where: { id: args.service_id }, select: { name: true, durationMinutes: true } });
         if (!service) return { error: 'Serviço não encontrado.' };
-
-        const [startH, startM] = args.time.split(':').map(Number);
-        const endMinutes = startH * 60 + startM + service.durationMinutes;
-        const endTime = `${Math.floor(endMinutes / 60).toString().padStart(2, '0')}:${(endMinutes % 60).toString().padStart(2, '0')}`;
-
+        const [h, mi] = args.time.split(':').map(Number);
+        const endM = h * 60 + mi + service.durationMinutes;
+        const endTime = `${Math.floor(endM / 60).toString().padStart(2, '0')}:${(endM % 60).toString().padStart(2, '0')}`;
         try {
           await this.prisma.$transaction(async (tx) => {
-            const conflict = await tx.appointment.findFirst({
-              where: { companyId, collaboratorId: collab.id, scheduledDate: new Date(args.date + 'T00:00:00.000Z'), scheduledTime: args.time, status: { notIn: [AppointmentStatus.CANCELLED] } },
-            });
+            const conflict = await tx.appointment.findFirst({ where: { companyId, collaboratorId: collab.id, scheduledDate: new Date(args.date + 'T00:00:00.000Z'), scheduledTime: args.time, status: { notIn: [AppointmentStatus.CANCELLED] } } });
             if (conflict) throw new Error('SLOT_TAKEN');
-            await tx.appointment.create({
-              data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: args.service_id, scheduledDate: new Date(args.date + 'T00:00:00.000Z'), scheduledTime: args.time, endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true },
-            });
+            await tx.appointment.create({ data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: args.service_id, scheduledDate: new Date(args.date + 'T00:00:00.000Z'), scheduledTime: args.time, endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true } });
           }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-
-          const [y, m, d] = args.date.split('-');
-          const dateFormatted = `${d}/${m}/${y}`;
-          const clientName = ctx.clientName ?? 'Cliente';
+          const [y, mo, da] = args.date.split('-');
+          const dateF = `${da}/${mo}/${y}`;
           const customMsg = ctx.config?.scheduleConfirmMsg?.trim();
           const confirmation_message = customMsg
-            ? applyPlaceholders(customMsg, { nome: clientName, servico: service.name, horario: args.time, profissional: collab.name, data: dateFormatted })
-            : `*Agendamento confirmado!* ✅\n\nData: ${dateFormatted}\nHorário: ${args.time}\nServiço: ${service.name}\nProfissional: ${collab.name}`;
-
+            ? applyPlaceholders(customMsg, { nome: ctx.clientName ?? 'Cliente', servico: service.name, horario: args.time, profissional: collab.name, data: dateF })
+            : `*Agendamento confirmado!* ✅\n\nData: ${dateF}\nHorário: ${args.time}\nServiço: ${service.name}\nProfissional: ${collab.name}`;
           return { success: true, confirmation_message };
-        } catch {
-          return { error: 'Horário indisponível ou já reservado. Tente outro horário.' };
-        }
+        } catch { return { error: 'Horário indisponível. Tente outro.' }; }
       }
 
       case 'list_my_appointments': {
@@ -362,8 +293,7 @@ export class WhatsappAiService {
         const appts = await this.prisma.appointment.findMany({
           where: { companyId, clientId: ctx.clientId, scheduledDate: { gte: today }, status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED] } },
           include: { service: { select: { name: true } }, collaborator: { select: { name: true } } },
-          orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
-          take: 5,
+          orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }], take: 5,
         });
         return { appointments: appts.map((a) => ({ id: a.id, date: a.scheduledDate.toISOString().slice(0, 10).split('-').reverse().join('/'), time: a.scheduledTime, service: a.service.name, collaborator: a.collaborator.name, status: a.status })) };
       }
@@ -371,21 +301,15 @@ export class WhatsappAiService {
       case 'cancel_appointment': {
         if (!ctx.clientId) return { error: 'Cliente não identificado.' };
         if (!args.appointment_id) return { error: 'appointment_id obrigatório.' };
-        const appt = await this.prisma.appointment.findFirst({
-          where: { id: args.appointment_id, companyId, clientId: ctx.clientId },
-          include: { service: { select: { name: true } }, collaborator: { select: { name: true } } },
-        });
+        const appt = await this.prisma.appointment.findFirst({ where: { id: args.appointment_id, companyId, clientId: ctx.clientId }, include: { service: { select: { name: true } }, collaborator: { select: { name: true } } } });
         if (!appt) return { error: 'Agendamento não encontrado.' };
-        if (!['SCHEDULED', 'CONFIRMED'].includes(appt.status)) return { error: `Não é possível cancelar com status ${appt.status}.` };
-        await this.prisma.appointment.update({
-          where: { id: args.appointment_id },
-          data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelReason: 'Cancelado pelo cliente via WhatsApp' },
-        });
-        const dateFormatted = appt.scheduledDate.toISOString().slice(0, 10).split('-').reverse().join('/');
+        if (!['SCHEDULED', 'CONFIRMED'].includes(appt.status)) return { error: `Não é possível cancelar: status ${appt.status}.` };
+        await this.prisma.appointment.update({ where: { id: args.appointment_id }, data: { status: AppointmentStatus.CANCELLED, cancelledAt: new Date(), cancelReason: 'Cancelado pelo cliente via WhatsApp' } });
+        const dateF = appt.scheduledDate.toISOString().slice(0, 10).split('-').reverse().join('/');
         const customMsg = ctx.config?.cancellationMessage?.trim();
         const cancellation_message = customMsg
-          ? applyPlaceholders(customMsg, { nome: ctx.clientName ?? 'Cliente', servico: appt.service.name, horario: appt.scheduledTime, profissional: appt.collaborator.name, data: dateFormatted })
-          : `*Agendamento cancelado!*\n\n${dateFormatted} às ${appt.scheduledTime}\n${appt.service.name} com ${appt.collaborator.name}`;
+          ? applyPlaceholders(customMsg, { nome: ctx.clientName ?? 'Cliente', servico: appt.service.name, horario: appt.scheduledTime, profissional: appt.collaborator.name, data: dateF })
+          : `*Agendamento cancelado!*\n\n${dateF} às ${appt.scheduledTime}\n${appt.service.name} com ${appt.collaborator.name}`;
         return { success: true, cancellation_message };
       }
 
@@ -398,26 +322,16 @@ export class WhatsappAiService {
           include: { service: { select: { name: true } }, collaborator: { select: { name: true } } },
           orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
         });
-        if (!appt) return { found: false, message: 'Nenhum agendamento futuro encontrado.' };
+        if (!appt) return { found: false, message: 'Nenhum agendamento futuro.' };
         const dateStr = appt.scheduledDate.toISOString().slice(0, 10);
-        const apptDateTime = new Date(`${dateStr}T${appt.scheduledTime}:00`);
-        const minutesUntil = differenceInMinutes(apptDateTime, now);
-        const hoursUntil = Math.floor(minutesUntil / 60);
-        const minsRem = minutesUntil % 60;
-        const timeLabel = minutesUntil < 0 ? 'já passou' : minutesUntil < 60 ? `${minutesUntil} minutos` : `${hoursUntil}h${minsRem > 0 ? ` e ${minsRem}min` : ''}`;
-        return {
-          found: true,
-          date: dateStr.split('-').reverse().join('/'),
-          time: appt.scheduledTime,
-          service: appt.service.name,
-          collaborator: appt.collaborator.name,
-          time_until: timeLabel,
-          reminder_info: ctx.config?.reminderHoursBefore ? `Lembrete ${ctx.config.reminderHoursBefore}h antes.` : null,
-        };
+        const apptDt = new Date(`${dateStr}T${appt.scheduledTime}:00`);
+        const minUntil = differenceInMinutes(apptDt, now);
+        const h = Math.floor(minUntil / 60); const m = minUntil % 60;
+        const timeLabel = minUntil < 0 ? 'já passou' : minUntil < 60 ? `${minUntil} minutos` : `${h}h${m > 0 ? ` e ${m}min` : ''}`;
+        return { found: true, date: dateStr.split('-').reverse().join('/'), time: appt.scheduledTime, service: appt.service.name, collaborator: appt.collaborator.name, time_until: timeLabel, reminder_info: ctx.config?.reminderHoursBefore ? `Lembrete ${ctx.config.reminderHoursBefore}h antes.` : null };
       }
 
-      default:
-        return { error: `Ferramenta desconhecida: ${toolName}` };
+      default: return { error: `Ferramenta desconhecida: ${toolName}` };
     }
   }
 }
