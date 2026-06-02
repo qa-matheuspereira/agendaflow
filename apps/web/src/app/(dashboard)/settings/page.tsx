@@ -178,7 +178,7 @@ export default function SettingsPage() {
       setWaDailyReminderMessage(waConfig.dailyReminderMessage ?? '');
       setWaSkipCollaborator(waConfig.skipCollaboratorSelection ?? false);
       setWaAllowMultipleServices(waConfig.allowMultipleServices ?? false);
-      setWaAiPersonality((waConfig as unknown as { aiPersonality?: string }).aiPersonality ?? '');
+      setWaAiPersonality(waConfig.aiPersonality ?? '');
     }
   }, [waConfig]);
 

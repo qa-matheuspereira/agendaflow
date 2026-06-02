@@ -31,7 +31,7 @@ function todayIso(): string {
 
 function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: string): string {
   const personality = cfg?.aiPersonality?.trim()
-    || 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação.';
+    || 'Seja simpático, descontraído e use linguagem informal. Respostas curtas e diretas.';
   const today = todayIso();
   const greeting = cfg?.greetingMessage?.trim();
 
@@ -41,8 +41,12 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: 
     '',
     `ESTILO: ${personality}`,
     '',
-    '━━ REGRA PRINCIPAL ━━',
-    'NUNCA envie mais de uma pergunta ou ação por mensagem. Uma coisa por vez.',
+    '━━ REGRAS ABSOLUTAS ━━',
+    '1. NUNCA envie mais de uma pergunta ou ação por mensagem. Uma coisa por vez.',
+    '2. NUNCA use markdown: proibido #, ##, ###, **, *, _, ---, ```. Texto simples apenas.',
+    '3. NUNCA use emojis.',
+    '4. NUNCA invente serviços, horários ou dados. Use SOMENTE os retornados pelas ferramentas.',
+    '5. NUNCA mostre IDs (UUIDs) ao usuário.',
     '',
     '━━ FLUXO OBRIGATÓRIO ━━',
     clientName
@@ -162,7 +166,7 @@ export class WhatsappAiService {
       tools,
       tool_choice: 'auto',
       max_tokens: 512,
-      temperature: 0.3,
+      temperature: 0,
     });
 
     let loops = 0;
@@ -293,12 +297,13 @@ export class WhatsappAiService {
       case 'get_available_dates': {
         const svcId = str('service_id');
         if (!svcId) return { error: 'service_id obrigatório' };
-        // Use SP timezone for "today" to avoid UTC midnight mismatch
+        // Use SP timezone — server runs UTC so new Date() hours may differ
         const { formatInTimeZone: fitz } = await import('date-fns-tz');
         const todaySpStr = fitz(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
         const [ty, tm, td] = todaySpStr.split('-').map(Number);
-        const now = new Date(ty, tm - 1, td);
-        const end = new Date(now); end.setDate(end.getDate() + 6);
+        // Create dates in UTC to match how schedule engine iterates
+        const now = new Date(Date.UTC(ty, tm - 1, td));
+        const end = new Date(Date.UTC(ty, tm - 1, td + 6));
         try {
           const dates = await this.scheduleEngine.getAvailableDatesInRange(companyId, svcId, undefined, now, end);
           return { available_dates: dates.map((d) => { const [y, mo, da] = d.split('-'); return { date_iso: d, date_br: `${da}/${mo}/${y}` }; }) };

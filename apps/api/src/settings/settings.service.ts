@@ -105,6 +105,7 @@ export class SettingsService {
         dailyReminderMessage: true,
         skipCollaboratorSelection: true,
         allowMultipleServices: true,
+        aiPersonality: true,
         createdAt: true,
         updatedAt: true,
       },
