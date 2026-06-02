@@ -26,6 +26,7 @@ export const validationSchema = Joi.object({
   MP_WEBHOOK_SECRET: Joi.string().optional(),
 
   GROQ_API_KEY: Joi.string().optional(),
+  GOOGLE_AI_API_KEY: Joi.string().optional(),
 
   THROTTLE_TTL: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
