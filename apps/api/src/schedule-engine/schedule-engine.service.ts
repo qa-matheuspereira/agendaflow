@@ -3,6 +3,9 @@ import { PrismaService } from '@/core/database/prisma.service';
 import { RedisService } from '@/core/redis/redis.service';
 import { GetSlotsDto } from './dto/get-slots.dto';
 import { AppointmentStatus, DayOfWeek } from '@agendaflow/shared';
+import { formatInTimeZone } from 'date-fns-tz';
+
+const TIMEZONE = 'America/Sao_Paulo';
 
 export interface TimeSlot {
   time: string;
@@ -157,13 +160,15 @@ export class ScheduleEngineService {
     const open = timeToMinutes(openTime);
     const close = timeToMinutes(closeTime);
 
-    // For today: only offer slots that start at least 1 minute from now
+    // For today: only offer slots that start at least 1 minute from now (SP timezone)
     const now = new Date();
-    const isToday =
-      localDate.getFullYear() === now.getFullYear() &&
-      localDate.getMonth() === now.getMonth() &&
-      localDate.getDate() === now.getDate();
-    const nowMinutes = isToday ? now.getHours() * 60 + now.getMinutes() + 1 : 0;
+    const todaySpStr = formatInTimeZone(now, TIMEZONE, 'yyyy-MM-dd');
+    const isToday = dateStr === todaySpStr;
+    let nowMinutes = 0;
+    if (isToday) {
+      const [spH, spM] = formatInTimeZone(now, TIMEZONE, 'HH:mm').split(':').map(Number);
+      nowMinutes = spH * 60 + spM + 1;
+    }
 
     const candidateSlots: string[] = [];
     for (let t = open; t + totalServiceTime <= close; t += slotDurationMin) {

@@ -265,7 +265,11 @@ export class WhatsappAiService {
       case 'get_available_dates': {
         const svcId = str('service_id');
         if (!svcId) return { error: 'service_id obrigatório' };
-        const now = new Date(); now.setHours(0, 0, 0, 0);
+        // Use SP timezone for "today" to avoid UTC midnight mismatch
+        const { formatInTimeZone: fitz } = await import('date-fns-tz');
+        const todaySpStr = fitz(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+        const [ty, tm, td] = todaySpStr.split('-').map(Number);
+        const now = new Date(ty, tm - 1, td);
         const end = new Date(now); end.setDate(end.getDate() + 6);
         try {
           const dates = await this.scheduleEngine.getAvailableDatesInRange(companyId, svcId, undefined, now, end);
@@ -286,6 +290,17 @@ export class WhatsappAiService {
         if (!ctx.clientId) return { error: 'Preciso do seu nome antes de agendar. Qual é o seu nome?' };
         const svcId3 = str('service_id'); const dateArg2 = str('date'); const timeArg = str('time');
         if (!svcId3 || !dateArg2 || !timeArg) return { error: 'Informe serviço, data e horário.' };
+        // Validate slot is not in the past (SP timezone)
+        {
+          const { formatInTimeZone: fitz } = await import('date-fns-tz');
+          const todaySp = fitz(new Date(), 'America/Sao_Paulo', 'yyyy-MM-dd');
+          if (dateArg2 < todaySp) return { error: 'Não é possível agendar para datas passadas.' };
+          if (dateArg2 === todaySp) {
+            const [spH, spM] = fitz(new Date(), 'America/Sao_Paulo', 'HH:mm').split(':').map(Number);
+            const [slotH, slotM] = timeArg.split(':').map(Number);
+            if (slotH * 60 + slotM <= spH * 60 + spM) return { error: `Horário ${timeArg} já passou. Escolha um horário futuro.` };
+          }
+        }
         const collabs = await this.prisma.collaborator.findMany({
           where: { companyId, isActive: true, services: { some: { serviceId: svcId3 } } },
           select: { id: true, name: true, appointments: { where: { scheduledDate: { gte: new Date(dateArg2 + 'T00:00:00.000Z'), lte: new Date(dateArg2 + 'T23:59:59.999Z') }, status: { notIn: [AppointmentStatus.CANCELLED] } }, select: { id: true } } },
