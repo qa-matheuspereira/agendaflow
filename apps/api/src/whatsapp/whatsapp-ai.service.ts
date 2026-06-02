@@ -122,7 +122,7 @@ export class WhatsappAiService {
     const tools = this.buildTools();
 
     let response = await this.groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-8b-instant',
       messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
       tools,
       tool_choice: 'auto',
@@ -155,7 +155,7 @@ export class WhatsappAiService {
       ctx.messages.push(...toolResults);
 
       response = await this.groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{ role: 'system', content: systemPrompt }, ...ctx.messages],
         tools,
         tool_choice: 'auto',
@@ -193,7 +193,7 @@ export class WhatsappAiService {
       ctx.messages.push(...toolResults);
 
       const retryResponse = await this.groq!.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{ role: 'system', content: buildSystemPrompt(ctx.config) }, ...ctx.messages],
         max_tokens: 512,
         temperature: 0.3,
