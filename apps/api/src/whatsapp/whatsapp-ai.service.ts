@@ -18,7 +18,7 @@ interface AiContext {
 
 const MAX_HISTORY = 12;
 const TOOL_LOOP_LIMIT = 6;
-const GROQ_MODEL = 'llama-3.1-8b-instant';
+const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 function applyPlaceholders(template: string, vars: Record<string, string>): string {
   return template.replace(/[{｛]\s*(\w+)\s*[}｛]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
