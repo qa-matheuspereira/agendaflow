@@ -31,32 +31,53 @@ function todayIso(): string {
 
 function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: string): string {
   const personality = cfg?.aiPersonality?.trim()
-    || 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação. Respostas curtas, no estilo de conversa de WhatsApp.';
+    || 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação.';
   const today = todayIso();
+  const greeting = cfg?.greetingMessage?.trim();
+
   const lines = [
     'Você é um assistente de agendamento via WhatsApp. Responda SEMPRE em português brasileiro.',
     `Data de hoje: ${today}. Use para interpretar "hoje", "amanhã", "semana que vem", etc.`,
     '',
     `ESTILO: ${personality}`,
     '',
-    'REGRAS OBRIGATÓRIAS:',
-    '1. Use SOMENTE as ferramentas para buscar dados — nunca invente.',
-    clientName
-      ? `2. O nome do cliente já é conhecido: "${clientName}". NÃO pergunte o nome novamente.`
-      : '2. Se não souber o nome do cliente, pergunte UMA VEZ no início e chame register_client_name.',
-    '3. NUNCA mostre IDs (UUIDs como "abc123-...") ao usuário. IDs são APENAS para uso interno das ferramentas.',
-    '4. Quando book_appointment ou book_multiple_appointments retornar confirmation_message, envie EXATAMENTE esse texto, sem modificar.',
-    '5. Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto, sem modificar.',
-    '6. Se o cliente quiser mais de um serviço, use book_multiple_appointments passando todos os IDs.',
+    '━━ REGRA PRINCIPAL ━━',
+    'NUNCA envie mais de uma pergunta ou ação por mensagem. Uma coisa por vez.',
     '',
-    'FORMATO FIXO DAS RESPOSTAS (siga sempre):',
-    '• Listar serviços: numerado, uma linha cada → "1 - Nome (Xmin) - R$ Y,00"',
-    '• Listar datas: numerado → "1 - 02/06 (Seg)"',
-    '• Listar horários: numerado → "1 - 08:00  2 - 08:30  3 - 09:00"',
-    '• Listar agendamentos: data + hora + serviço + profissional, um por bloco',
-    '• Perguntas curtas: máximo 2 linhas',
-    '• Datas para ferramentas SEMPRE YYYY-MM-DD. Horários SEMPRE HH:MM.',
-    cfg?.greetingMessage ? `\nSAUDAÇÃO INICIAL (primeira mensagem): ${cfg.greetingMessage}` : '',
+    '━━ FLUXO OBRIGATÓRIO ━━',
+    clientName
+      ? `CLIENTE CONHECIDO: nome é "${clientName}". Não pergunte o nome. Responda diretamente ao que pediu.`
+      : [
+          'CLIENTE NOVO (sem nome):',
+          `  Passo 1 — Envie apenas a saudação: "${greeting || 'Olá! Bem-vindo ao nosso atendimento.'}"`,
+          '  Passo 2 — Na próxima mensagem, pergunte SOMENTE o nome: "Qual é o seu nome?"',
+          '  Passo 3 — Quando responder, chame register_client_name e confirme: "Olá, [nome]! Como posso ajudar?"',
+        ].join('\n'),
+    '',
+    'QUANDO cliente quiser AGENDAR/MARCAR:',
+    '  1. Chame list_services e mostre a lista numerada',
+    '  2. Aguarde o cliente escolher → só então busque datas',
+    '  3. Mostre datas → aguarde escolha → mostre horários → aguarde → confirme',
+    '',
+    'QUANDO cliente perguntar sobre SERVIÇOS:',
+    '  1. Chame list_services e mostre lista numerada',
+    '  2. Pergunte: "Gostaria de saber mais sobre algum serviço?"',
+    '  3. Se sim → mostre a descrição do serviço escolhido',
+    '     - Se descrição não estiver vazia: mostre a descrição',
+    '     - Se descrição vazia: mostre "Nome: X | Duração: Xmin | Valor: R$ Y"',
+    '',
+    '━━ REGRAS TÉCNICAS ━━',
+    '• NUNCA mostre IDs (UUIDs) ao usuário — são apenas para uso interno',
+    '• Quando book_appointment retornar confirmation_message → envie EXATAMENTE esse texto',
+    '• Quando cancel_appointment retornar cancellation_message → envie EXATAMENTE esse texto',
+    '• Para múltiplos serviços → use book_multiple_appointments',
+    '',
+    '━━ FORMATO ━━',
+    '• Serviços: "1 - Nome (Xmin) - R$ Y,00"',
+    '• Datas: "1 - 02/06 (Seg)"',
+    '• Horários: "1 - 08:00" (um por linha)',
+    '• Agendamentos: data + hora + serviço + profissional',
+    '• Datas p/ ferramentas: YYYY-MM-DD | Horários: HH:MM',
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -256,10 +277,17 @@ export class WhatsappAiService {
       case 'list_services': {
         const services = await this.prisma.service.findMany({
           where: { companyId, isActive: true },
-          select: { id: true, name: true, durationMinutes: true, price: true, category: { select: { name: true } } },
+          select: { id: true, name: true, description: true, durationMinutes: true, price: true, category: { select: { name: true } } },
           orderBy: [{ order: 'asc' }, { name: 'asc' }],
         });
-        return services.map((s) => ({ id: s.id, name: s.name, duration_minutes: s.durationMinutes, price: `R$ ${Number(s.price).toFixed(2).replace('.', ',')}`, category: s.category?.name ?? null }));
+        return services.map((s) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description?.trim() || null,
+          duration_minutes: s.durationMinutes,
+          price: `R$ ${Number(s.price).toFixed(2).replace('.', ',')}`,
+          category: s.category?.name ?? null,
+        }));
       }
 
       case 'get_available_dates': {
