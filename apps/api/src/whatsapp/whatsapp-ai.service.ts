@@ -117,7 +117,7 @@ export class WhatsappAiService {
     }
 
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-1.5-flash-latest',
       systemInstruction: buildSystemPrompt(waCfg),
       tools: [{ functionDeclarations: this.buildFunctionDeclarations() }],
     });
