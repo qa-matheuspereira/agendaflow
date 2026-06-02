@@ -213,7 +213,7 @@ export default function SettingsPage() {
         skipCollaboratorSelection: waSkipCollaborator,
         allowMultipleServices: waAllowMultipleServices,
         aiPersonality: waAiPersonality,
-      } as Parameters<typeof updateWa.mutateAsync>[0]);
+      });
       toast.success('Configurações WhatsApp atualizadas!');
     } catch {
       toast.error('Erro ao salvar');

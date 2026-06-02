@@ -23,13 +23,20 @@ function applyPlaceholders(template: string, vars: Record<string, string>): stri
   return template.replace(/[{｛]\s*(\w+)\s*[}｝]/gi, (_, key) => vars[key.toLowerCase()] ?? `{${key}}`);
 }
 
+function todayIso(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
   const personality = cfg?.aiPersonality?.trim()
     ? cfg.aiPersonality.trim()
     : 'Seja simpático, descontraído e use linguagem informal. Pode usar emojis com moderação. Respostas curtas, no estilo de conversa de WhatsApp.';
 
+  const today = todayIso();
   const lines = [
     'Você é um assistente de agendamento via WhatsApp. Responda SEMPRE em português brasileiro.',
+    `Data de hoje: ${today}. Use essa data para interpretar "hoje", "amanhã", "semana que vem", etc.`,
     '',
     `ESTILO DE COMUNICAÇÃO: ${personality}`,
     '',
@@ -48,7 +55,10 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined): string {
     '4. Nunca invente IDs — use apenas os retornados pelas ferramentas.',
     '5. Quando book_appointment retornar confirmation_message, envie EXATAMENTE esse texto.',
     '6. Quando cancel_appointment retornar cancellation_message, envie EXATAMENTE esse texto.',
-    '7. Máximo 4 linhas por resposta.',
+    '7. Ao listar horários disponíveis, apresente no formato de lista numerada (1 - 08:00, 2 - 08:30, etc.) para facilitar a escolha.',
+    '8. Ao listar datas, apresente no formato DD/MM com o dia da semana (ex: 02/06 (Seg)).',
+    '9. Datas para book_appointment SEMPRE no formato YYYY-MM-DD. Horários SEMPRE no formato HH:MM.',
+    '10. Máximo 4 linhas por resposta, exceto quando listar horários/datas.',
   ];
 
   if (cfg?.greetingMessage) {
