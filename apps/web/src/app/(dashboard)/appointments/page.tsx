@@ -8,7 +8,7 @@ import { format, startOfWeek, addWeeks, subWeeks, addDays, isToday, isSameDay } 
 import { ptBR } from 'date-fns/locale';
 import {
   Plus, ChevronLeft, ChevronRight, CheckCircle2, PlayCircle, XCircle,
-  AlertTriangle, Loader2, Trash2, User, Clock, SlidersHorizontal,
+  AlertTriangle, Loader2, Trash2, User, Clock, SlidersHorizontal, Package,
 } from 'lucide-react';
 
 import {
@@ -120,6 +120,9 @@ function ApptDialog({
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             {appt.clientName}
             <Badge variant={cfg.badgeVariant} className="text-xs">{cfg.label}</Badge>
+            {appt.clientPackageId
+              ? <Badge variant="outline" className="text-xs gap-1"><Package className="h-3 w-3" />Pacote</Badge>
+              : <Badge variant="outline" className="text-xs">Avulso</Badge>}
           </DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-1 text-left pt-1">
@@ -178,6 +181,7 @@ export default function AppointmentsPage() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(today, { weekStartsOn: 0 }));
   const [viewDate, setViewDate] = useState(today); // selected day (mobile day view)
   const [collabFilter, setCollabFilter] = useState('');
+  const [packageFilter, setPackageFilter] = useState<'all' | 'package' | 'avulso'>('all');
   const [showFinished, setShowFinished] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [apptDialogOpen, setApptDialogOpen] = useState(false);
@@ -230,7 +234,8 @@ export default function AppointmentsPage() {
   const clients = clientsData?.data ?? [];
   const services = servicesData?.data ?? [];
 
-  const appointments = showFinished ? allAppointments : allAppointments.filter((a) => ACTIVE_STATUSES.has(a.status));
+  const appointments = (showFinished ? allAppointments : allAppointments.filter((a) => ACTIVE_STATUSES.has(a.status)))
+    .filter((a) => packageFilter === 'all' ? true : packageFilter === 'package' ? !!a.clientPackageId : !a.clientPackageId);
 
   // Dynamic grid range from business hours
   const openHours = businessHours.filter((bh) => bh.isOpen);
@@ -404,7 +409,12 @@ export default function AppointmentsPage() {
                   <div className="p-3 space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-semibold text-sm">{appt.clientName}</span>
-                      <Badge variant={cfg.badgeVariant} className="text-[10px] shrink-0">{cfg.label}</Badge>
+                      <div className="flex gap-1 shrink-0">
+                        <Badge variant={cfg.badgeVariant} className="text-[10px]">{cfg.label}</Badge>
+                        {appt.clientPackageId
+                          ? <Badge variant="outline" className="text-[10px] gap-0.5"><Package className="h-2.5 w-2.5" />Pacote</Badge>
+                          : <Badge variant="outline" className="text-[10px]">Avulso</Badge>}
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground">{appt.serviceName} · {appt.serviceDurationMinutes} min</p>
                     <div className="flex items-center gap-1 text-xs text-muted-foreground"><User className="h-3 w-3" />{appt.collaboratorName}</div>
@@ -484,6 +494,14 @@ export default function AppointmentsPage() {
             {collabs.filter((c) => c.isActive).map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select value={packageFilter} onValueChange={(v) => setPackageFilter(v as typeof packageFilter)}>
+          <SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="package">Pacote</SelectItem>
+            <SelectItem value="avulso">Avulso</SelectItem>
           </SelectContent>
         </Select>
         <Button size="sm" variant={showFinished ? 'secondary' : 'outline'} className="h-8 text-xs"

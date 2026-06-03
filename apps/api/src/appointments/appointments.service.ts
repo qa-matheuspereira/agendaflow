@@ -10,6 +10,7 @@ import { AuditService } from '@/audit/audit.service';
 import { ScheduleEngineService } from '@/schedule-engine/schedule-engine.service';
 import { NotificationsService } from '@/notifications/notifications.service';
 import { ClientsService } from '@/clients/clients.service';
+import { PackagesService } from '@/packages/packages.service';
 import { AuditAction, NotificationType } from '@agendaflow/shared';
 import { AppointmentStatus } from '@prisma/client';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
@@ -50,6 +51,7 @@ export class AppointmentsService {
     private readonly scheduleEngine: ScheduleEngineService,
     private readonly notifications: NotificationsService,
     private readonly clientsService: ClientsService,
+    private readonly packagesService: PackagesService,
   ) {}
 
   async create(companyId: string, dto: CreateAppointmentDto, userId: string) {
@@ -88,6 +90,15 @@ export class AppointmentsService {
         dto.scheduledTime,
       );
 
+      // Resolve package: use explicit id or auto-detect by service
+      let resolvedPackageId = dto.clientPackageId ?? null;
+      if (!resolvedPackageId) {
+        const found = await this.packagesService.findActivePackageForService(
+          companyId, dto.clientId, dto.serviceId,
+        );
+        resolvedPackageId = found?.id ?? null;
+      }
+
       const appointment = await this.prisma.appointment.create({
         data: {
           companyId,
@@ -99,6 +110,9 @@ export class AppointmentsService {
           endTime,
           notes: dto.notes,
           status: AppointmentStatus.SCHEDULED,
+          ...(resolvedPackageId && { clientPackageId: resolvedPackageId }),
+          ...(dto.bookingSessionId && { bookingSessionId: dto.bookingSessionId }),
+          ...(dto.packageOwnerId && { packageOwnerId: dto.packageOwnerId }),
         },
         include: {
           client: { select: { name: true, whatsappNumber: true } },
@@ -106,6 +120,16 @@ export class AppointmentsService {
           service: { select: { name: true } },
         },
       });
+
+      // Debit package credit after appointment created
+      if (resolvedPackageId) {
+        const sessionId = dto.bookingSessionId ?? appointment.id;
+        try {
+          await this.packagesService.debitCredit(resolvedPackageId, sessionId, companyId);
+        } catch (err) {
+          this.logger.warn(`Package debit failed for ${resolvedPackageId}: ${(err as Error).message}`);
+        }
+      }
 
       await this.audit.log({
         companyId,
@@ -213,6 +237,7 @@ export class AppointmentsService {
       paymentStatus: appt.payment?.status ?? undefined,
       notes: appt.notes ?? undefined,
       createdViaBot: appt.createdViaBot,
+      clientPackageId: appt.clientPackageId ?? undefined,
       createdAt: appt.createdAt.toISOString(),
     }));
 

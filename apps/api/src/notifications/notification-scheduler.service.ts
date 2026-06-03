@@ -3,7 +3,8 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '@/core/database/prisma.service';
 import { NotificationsService } from './notifications.service';
 import { NotificationType } from '@agendaflow/shared';
-import { AppointmentStatus } from '@prisma/client';
+import { AppointmentStatus, ClientPackageStatus } from '@prisma/client';
+import { addDays } from 'date-fns';
 
 interface ReminderRule {
   minutesBefore: number;
@@ -350,6 +351,80 @@ export class NotificationSchedulerService {
       });
 
       this.logger.log(`Auto-concluído agendamento ${appt.id} (empresa ${appt.companyId})`);
+    }
+  }
+
+  // Runs daily at 1am — expire packages and notify clients
+  @Cron('0 1 * * *')
+  async processExpiredPackages(): Promise<void> {
+    try {
+      const now = new Date();
+      const expired = await this.prisma.clientPackage.findMany({
+        where: { status: ClientPackageStatus.ACTIVE, expiresAt: { lt: now } },
+        include: {
+          client: { select: { id: true, name: true, whatsappNumber: true } },
+          package: { select: { name: true } },
+          company: { select: { id: true, whatsappConfig: { select: { instanceName: true, isConnected: true } } } },
+        },
+      });
+      if (expired.length === 0) return;
+
+      await this.prisma.clientPackage.updateMany({
+        where: { id: { in: expired.map((cp) => cp.id) } },
+        data: { status: ClientPackageStatus.EXPIRED },
+      });
+
+      for (const cp of expired) {
+        const waCfg = cp.company.whatsappConfig;
+        if (!waCfg?.isConnected) continue;
+        await this.notifications.enqueueWhatsapp({
+          companyId: cp.company.id,
+          instanceName: waCfg.instanceName,
+          toNumber: cp.client.whatsappNumber,
+          message: `Olá ${cp.client.name}! Seu pacote *${cp.package.name}* expirou. Entre em contato para renovar.`,
+          type: NotificationType.PACKAGE_EXPIRED,
+          clientId: cp.client.id,
+        });
+      }
+
+      this.logger.log(`Pacotes expirados: ${expired.length}`);
+    } catch (err) {
+      this.logger.error('Erro ao processar pacotes expirados', err);
+    }
+  }
+
+  // Runs daily at 8am — warn clients with packages expiring in 3 days
+  @Cron('0 8 * * *')
+  async checkExpiringPackages(): Promise<void> {
+    try {
+      const now = new Date();
+      const cutoff = addDays(now, 3);
+      const expiring = await this.prisma.clientPackage.findMany({
+        where: { status: ClientPackageStatus.ACTIVE, expiresAt: { gt: now, lte: cutoff } },
+        include: {
+          client: { select: { id: true, name: true, whatsappNumber: true } },
+          package: { select: { name: true } },
+          company: { select: { id: true, whatsappConfig: { select: { instanceName: true, isConnected: true } } } },
+        },
+      });
+
+      for (const cp of expiring) {
+        const waCfg = cp.company.whatsappConfig;
+        if (!waCfg?.isConnected) continue;
+        const daysLeft = Math.ceil((cp.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        await this.notifications.enqueueWhatsapp({
+          companyId: cp.company.id,
+          instanceName: waCfg.instanceName,
+          toNumber: cp.client.whatsappNumber,
+          message: `Olá ${cp.client.name}! Seu pacote *${cp.package.name}* vence em ${daysLeft} dia(s). Renove para não perder seus créditos.`,
+          type: NotificationType.PACKAGE_EXPIRING,
+          clientId: cp.client.id,
+        });
+      }
+
+      if (expiring.length > 0) this.logger.log(`Avisos de vencimento enviados: ${expiring.length}`);
+    } catch (err) {
+      this.logger.error('Erro ao verificar pacotes vencendo', err);
     }
   }
 

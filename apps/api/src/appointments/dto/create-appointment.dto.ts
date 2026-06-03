@@ -24,4 +24,16 @@ export class CreateAppointmentDto {
   @IsOptional()
   @IsBoolean()
   skipLock?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  clientPackageId?: string;
+
+  @IsOptional()
+  @IsString()
+  bookingSessionId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  packageOwnerId?: string;
 }

@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/core/database/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { ScheduleEngineService } from '@/schedule-engine/schedule-engine.service';
+import { PackagesService } from '@/packages/packages.service';
 import { AppointmentStatus, Prisma, type WhatsappConfig } from '@prisma/client';
 import Groq from 'groq-sdk';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'groq-sdk/resources/chat/completions';
@@ -103,6 +104,8 @@ export class WhatsappAiService {
     private readonly whatsapp: WhatsappService,
     private readonly scheduleEngine: ScheduleEngineService,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => PackagesService))
+    private readonly packagesService: PackagesService,
   ) {
     const apiKey = this.config.get<string>('GROQ_API_KEY');
     if (apiKey) {
@@ -244,6 +247,7 @@ export class WhatsappAiService {
       { type: 'function', function: { name: 'list_my_appointments', description: 'Lista próximos agendamentos do cliente', parameters: { type: 'object', properties: {}, required: [] } } },
       { type: 'function', function: { name: 'cancel_appointment', description: 'Cancela agendamento pelo ID', parameters: { type: 'object', properties: { appointment_id: { type: 'string' } }, required: ['appointment_id'] } } },
       { type: 'function', function: { name: 'get_next_appointment_info', description: 'Retorna próximo agendamento e tempo restante. Use para "falta quanto tempo?", "quando é meu horário?"', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'check_client_packages', description: 'Verifica pacotes ativos do cliente. Use quando o cliente pergunta sobre seus pacotes, créditos ou saldo.', parameters: { type: 'object', properties: {}, required: [] } } },
       {
         type: 'function', function: {
           name: 'book_multiple_appointments',
@@ -348,19 +352,32 @@ export class WhatsappAiService {
         const [h, mi] = timeArg.split(':').map(Number);
         const endM = h * 60 + mi + service.durationMinutes;
         const endTime = `${Math.floor(endM / 60).toString().padStart(2, '0')}:${(endM % 60).toString().padStart(2, '0')}`;
+        // Check for active package before booking
+        const activePkg = ctx.clientId
+          ? await this.packagesService.findActivePackageForService(companyId, ctx.clientId!, svcId3)
+          : null;
+
         try {
+          let createdApptId: string | null = null;
           await this.prisma.$transaction(async (tx) => {
             const conflict = await tx.appointment.findFirst({ where: { companyId, collaboratorId: collab.id, scheduledDate: new Date(dateArg2 + 'T00:00:00.000Z'), scheduledTime: timeArg, status: { notIn: [AppointmentStatus.CANCELLED] } } });
             if (conflict) throw new Error('SLOT_TAKEN');
-            await tx.appointment.create({ data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: svcId3, scheduledDate: new Date(dateArg2 + 'T00:00:00.000Z'), scheduledTime: timeArg, endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true } });
+            const created = await tx.appointment.create({ data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: svcId3, scheduledDate: new Date(dateArg2 + 'T00:00:00.000Z'), scheduledTime: timeArg, endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true, ...(activePkg && { clientPackageId: activePkg.id }) } });
+            createdApptId = created.id;
           }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+          // Debit package credit if applicable
+          if (activePkg && createdApptId) {
+            try { await this.packagesService.debitCredit(activePkg.id, createdApptId, companyId); } catch (e) { this.logger.warn(`Package debit failed: ${e}`); }
+          }
+
           const [y, mo, da] = dateArg2.split('-');
           const dateF = `${da}/${mo}/${y}`;
           const customMsg = ctx.config?.scheduleConfirmMsg?.trim();
           const confirmation_message = customMsg
             ? applyPlaceholders(customMsg, { nome: ctx.clientName ?? 'Cliente', servico: service.name, horario: timeArg, profissional: collab.name, data: dateF })
             : `*Agendamento confirmado!* ✅\n\nData: ${dateF}\nHorário: ${timeArg}\nServiço: ${service.name}\nProfissional: ${collab.name}`;
-          return { success: true, confirmation_message };
+          return { success: true, confirmation_message, ...(activePkg && { package_credit_used: true, credits_left: activePkg.creditsTotal - activePkg.creditsUsed - 1 }) };
         } catch { return { error: 'Horário indisponível. Tente outro.' }; }
       }
 
@@ -454,19 +471,32 @@ export class WhatsappAiService {
           cursor = endMin + svc.breakAfterMinutes;
         }
 
+        // Check for active package (PER_VISIT: 1 credit for entire session)
+        const sessionId = `bot-session-${ctx.clientId}-${Date.now()}`;
+        const activePkgMulti = ctx.clientId
+          ? await this.packagesService.findActivePackageForService(companyId, ctx.clientId!, ordered[0].id)
+          : null;
+
         // Create all appointments in a transaction
         try {
+          const createdIds: string[] = [];
           await this.prisma.$transaction(async (tx) => {
             for (const slot of slots) {
               const conflict = await tx.appointment.findFirst({
                 where: { companyId, collaboratorId: collab.id, scheduledDate: new Date(date + 'T00:00:00.000Z'), scheduledTime: slot.startTime, status: { notIn: [AppointmentStatus.CANCELLED] } },
               });
               if (conflict) throw new Error('SLOT_TAKEN');
-              await tx.appointment.create({
-                data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: slot.serviceId, scheduledDate: new Date(date + 'T00:00:00.000Z'), scheduledTime: slot.startTime, endTime: slot.endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true },
+              const created = await tx.appointment.create({
+                data: { companyId, clientId: ctx.clientId!, collaboratorId: collab.id, serviceId: slot.serviceId, scheduledDate: new Date(date + 'T00:00:00.000Z'), scheduledTime: slot.startTime, endTime: slot.endTime, status: AppointmentStatus.SCHEDULED, createdViaBot: true, bookingSessionId: sessionId, ...(activePkgMulti && { clientPackageId: activePkgMulti.id }) },
               });
+              createdIds.push(created.id);
             }
           }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+          // Debit once per session (PER_VISIT) or per service (PER_SERVICE)
+          if (activePkgMulti && createdIds.length > 0) {
+            try { await this.packagesService.debitCredit(activePkgMulti.id, sessionId, companyId); } catch (e) { this.logger.warn(`Package debit failed (multi): ${e}`); }
+          }
 
           const [y, mo, da] = date.split('-');
           const dateF = `${da}/${mo}/${y}`;
@@ -477,6 +507,21 @@ export class WhatsappAiService {
         } catch {
           return { error: 'Horário indisponível para um dos serviços. Tente outro horário.' };
         }
+      }
+
+      case 'check_client_packages': {
+        if (!ctx.clientId) return { packages: [], message: 'Cliente não identificado.' };
+        const clientPkgs = await this.packagesService.getClientPackages(companyId, ctx.clientId);
+        if (clientPkgs.length === 0) return { packages: [], message: 'Nenhum pacote ativo.' };
+        return {
+          packages: clientPkgs.map((cp) => ({
+            name: cp.package.name,
+            credits_total: cp.creditsTotal,
+            credits_used: cp.creditsUsed,
+            credits_left: cp.creditsTotal - cp.creditsUsed,
+            expires_at: cp.expiresAt.toISOString().slice(0, 10).split('-').reverse().join('/'),
+          })),
+        };
       }
 
       default: return { error: `Ferramenta desconhecida: ${toolName}` };
