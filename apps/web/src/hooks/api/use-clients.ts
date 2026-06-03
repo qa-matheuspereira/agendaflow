@@ -95,8 +95,10 @@ export function useDeleteClient() {
 }
 
 export function useToggleClientBot() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ whatsappNumber, disabled }: { whatsappNumber: string; disabled: boolean }) =>
       api.patch(`/whatsapp/bot/${whatsappNumber}`, { disabled }).then((res) => res.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['whatsapp-bot-disabled'] }),
   });
 }
