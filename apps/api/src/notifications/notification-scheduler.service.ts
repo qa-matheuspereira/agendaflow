@@ -140,6 +140,19 @@ export class NotificationSchedulerService {
           : `Olá, ${appt.client.name}! Lembrando que você tem *${appt.service.name}* com ${appt.collaborator.name} hoje às ${appt.scheduledTime}. Até logo!`;
         this.logger.debug(`[DailyReminder] appt=${appt.id} date=${dateFormatted} msg=${message.slice(0, 80)}`);
 
+        const dailyUpdated = await this.prisma.appointment.updateMany({
+          where: {
+            id: appt.id,
+            NOT: { sentReminderMinutes: { has: DAILY_SENTINEL } },
+          },
+          data: { sentReminderMinutes: { push: DAILY_SENTINEL } },
+        });
+
+        if (dailyUpdated.count === 0) {
+          this.logger.warn(`[DailyReminder] duplicate skipped for appt=${appt.id}`);
+          continue;
+        }
+
         await this.notifications.enqueueWhatsapp({
           companyId: config.companyId,
           instanceName: config.instanceName,
@@ -147,11 +160,6 @@ export class NotificationSchedulerService {
           message,
           type: NotificationType.APPOINTMENT_REMINDER,
           clientId: appt.clientId,
-        });
-
-        await this.prisma.appointment.update({
-          where: { id: appt.id },
-          data: { sentReminderMinutes: { push: DAILY_SENTINEL } },
         });
 
         this.logger.log(`Lembrete diário enviado para agendamento ${appt.id}`);
@@ -271,6 +279,22 @@ export class NotificationSchedulerService {
               : this.buildDefaultMessage(appt, dateStr, rule.minutesBefore);
 
             this.logger.debug(`[Reminder] mensagem final (80 chars): ${message.slice(0, 80)}`);
+
+            // Mark as sent BEFORE enqueuing to prevent duplicate sends
+            // if two cron executions overlap (both read sentReminderMinutes = [] concurrently).
+            const updated = await this.prisma.appointment.updateMany({
+              where: {
+                id: appt.id,
+                NOT: { sentReminderMinutes: { has: rule.minutesBefore } },
+              },
+              data: { sentReminderMinutes: { push: rule.minutesBefore } },
+            });
+
+            if (updated.count === 0) {
+              this.logger.warn(`[Reminder] duplicate skipped for appt=${appt.id} rule=${rule.minutesBefore}min`);
+              continue;
+            }
+
             await this.notifications.enqueueWhatsapp({
               companyId: config.companyId,
               instanceName: config.instanceName,
@@ -278,11 +302,6 @@ export class NotificationSchedulerService {
               message,
               type: NotificationType.APPOINTMENT_REMINDER,
               clientId: appt.clientId,
-            });
-
-            await this.prisma.appointment.update({
-              where: { id: appt.id },
-              data: { sentReminderMinutes: { push: rule.minutesBefore } },
             });
 
             this.logger.log(
