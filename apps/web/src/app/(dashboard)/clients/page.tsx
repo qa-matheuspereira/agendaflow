@@ -204,9 +204,14 @@ export default function ClientsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              clients.map((client) => (
+              clients.map((client) => {
+                const botOff = disabledSet.has(client.whatsappNumber);
+                return (
                 <TableRow key={client.id}>
-                  <TableCell className="font-medium">{client.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className={botOff ? 'text-muted-foreground/50' : undefined}>{client.name}</span>
+                    {botOff && <span className="ml-2 text-[10px] text-muted-foreground/50">bot off</span>}
+                  </TableCell>
                   <TableCell>{formatPhone(client.whatsappNumber)}</TableCell>
                   <TableCell className="text-muted-foreground">{client.email ?? '—'}</TableCell>
                   <TableCell className="text-center">{client.totalAppointments}</TableCell>
@@ -256,7 +261,7 @@ export default function ClientsPage() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+              )})
             )}
           </TableBody>
         </Table>
