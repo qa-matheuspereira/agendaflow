@@ -14,15 +14,15 @@ export class ReportsController {
   constructor(private readonly service: ReportsService) {}
 
   @Get('kpis')
+  @ApiOperation({ summary: 'KPIs do período (dateFrom/dateTo obrigatórios)' })
+  getKpis(@CurrentTenant() companyId: string, @Query() filter: ReportFilterDto) {
+    return this.service.getKpis(companyId, filter);
+  }
+
+  @Get('kpis/dashboard')
   @ApiOperation({ summary: 'KPIs do dashboard (hoje/semana/mês)' })
   getDashboardKpis(@CurrentTenant() companyId: string) {
     return this.service.getDashboardKpis(companyId);
-  }
-
-  @Get('kpis/period')
-  @ApiOperation({ summary: 'KPIs gerais do período' })
-  getKpis(@CurrentTenant() companyId: string, @Query() filter: ReportFilterDto) {
-    return this.service.getKpis(companyId, filter);
   }
 
   @Get('by-service')

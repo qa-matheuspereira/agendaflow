@@ -32,6 +32,7 @@ import { ReportsModule } from '@/reports/reports.module';
 import { SettingsModule } from '@/settings/settings.module';
 import { WhatsappModule } from '@/whatsapp/whatsapp.module';
 import { PaymentsModule } from '@/payments/payments.module';
+import { PackagesModule } from '@/packages/packages.module';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { PaymentsModule } from '@/payments/payments.module';
     SettingsModule,
     WhatsappModule,
     PaymentsModule,
+    PackagesModule,
   ],
   providers: [
     // Guards globais (ordem importa: JWT → Tenant → Roles)

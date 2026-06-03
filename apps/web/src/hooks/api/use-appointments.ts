@@ -17,6 +17,7 @@ export interface Appointment {
   paymentStatus?: string;
   notes?: string;
   createdViaBot: boolean;
+  clientPackageId?: string;
   createdAt: string;
 }
 

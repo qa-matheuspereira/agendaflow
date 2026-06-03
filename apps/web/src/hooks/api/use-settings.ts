@@ -38,6 +38,7 @@ export interface WhatsappConfig {
   dailyReminderMessage: string;
   skipCollaboratorSelection?: boolean;
   allowMultipleServices?: boolean;
+  aiPersonality?: string;
 }
 
 // ─── Queries ─────────────────────────────────────────────────────────────────

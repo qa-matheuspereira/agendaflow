@@ -95,6 +95,30 @@ enum NotificationType {
   PAYMENT_LINK
   RETURN_REMINDER
   CUSTOM
+  PACKAGE_ACTIVATED
+  PACKAGE_LOW_CREDITS
+  PACKAGE_EXHAUSTED
+  PACKAGE_EXPIRING
+  PACKAGE_EXPIRED
+}
+
+enum CreditMode {
+  PER_VISIT    // todos appointments da mesma sessão = 1 crédito
+  PER_SERVICE  // cada appointment = 1 crédito
+}
+
+enum ClientPackageStatus {
+  ACTIVE
+  EXHAUSTED
+  EXPIRED
+  CANCELLED
+}
+
+enum PackagePaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
 }
 
 // ============================================================
@@ -135,6 +159,8 @@ model Company {
   conversationStates  ConversationState[]
   auditLogs           AuditLog[]
   payments            Payment[]
+  servicePackages     ServicePackage[]
+  clientPackages      ClientPackage[]
 
   @@index([slug])
   @@index([status])
@@ -232,11 +258,12 @@ model Client {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  appointments Appointment[]
-  queueEntries QueueEntry[]
-  clientPlan   ClientPlan?
-  absences     ClientAbsence[]
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  appointments    Appointment[]
+  queueEntries    QueueEntry[]
+  clientPlan      ClientPlan?
+  absences        ClientAbsence[]
+  clientPackages  ClientPackage[]
 
   @@unique([companyId, whatsappNumber])
   @@index([companyId])
@@ -435,15 +462,19 @@ model Appointment {
   dayReminderSent      Boolean           @default(false)
   sentReminderMinutes  Int[]
   createdViaBot        Boolean           @default(false)
+  clientPackageId      String?
+  packageOwnerId       String?
+  bookingSessionId     String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  client       Client          @relation(fields: [clientId], references: [id])
-  collaborator Collaborator    @relation(fields: [collaboratorId], references: [id])
-  service      Service         @relation(fields: [serviceId], references: [id])
-  payment      Payment?
-  absences     ClientAbsence[]
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  client         Client          @relation(fields: [clientId], references: [id])
+  collaborator   Collaborator    @relation(fields: [collaboratorId], references: [id])
+  service        Service         @relation(fields: [serviceId], references: [id])
+  clientPackage  ClientPackage?  @relation(fields: [clientPackageId], references: [id])
+  payment        Payment?
+  absences       ClientAbsence[]
 
   @@index([companyId])
   @@index([companyId, scheduledDate])
@@ -547,6 +578,7 @@ model WhatsappConfig {
   autoConfirmHours    Int     @default(2)
   skipCollaboratorSelection Boolean @default(false)
   allowMultipleServices     Boolean @default(false)
+  aiPersonality       String? @db.Text
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -643,6 +675,7 @@ model ConversationState {
   whatsappNumber String
   currentStep    String
   context        Json     @default("{}")
+  botDisabled    Boolean  @default(false)
   expiresAt      DateTime
   updatedAt      DateTime @updatedAt
   createdAt      DateTime @default(now())
@@ -679,4 +712,58 @@ model AuditLog {
   @@index([companyId, entity, entityId])
   @@index([companyId, createdAt])
   @@map("audit_logs")
+}
+
+// ============================================================
+// PACKAGES (Pacotes pré-pagos)
+// ============================================================
+
+model ServicePackage {
+  id           String     @id @default(uuid())
+  companyId    String
+  name         String
+  description  String?    @db.Text
+  credits      Int
+  price        Decimal    @db.Decimal(10, 2)
+  validityDays Int        @default(30)
+  creditMode   CreditMode @default(PER_VISIT)
+  serviceIds   String[]   @default([])
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  company       Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  clientPackages ClientPackage[]
+
+  @@index([companyId])
+  @@index([companyId, isActive])
+  @@map("service_packages")
+}
+
+model ClientPackage {
+  id             String               @id @default(uuid())
+  companyId      String
+  clientId       String
+  packageId      String
+  creditsTotal   Int
+  creditsUsed    Int                  @default(0)
+  purchasedAt    DateTime             @default(now())
+  expiresAt      DateTime
+  status         ClientPackageStatus  @default(ACTIVE)
+  paymentStatus  PackagePaymentStatus @default(PENDING)
+  paymentId      String?
+  paymentUrl     String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  company      Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  client       Client         @relation(fields: [clientId], references: [id])
+  package      ServicePackage @relation(fields: [packageId], references: [id])
+  appointments Appointment[]
+
+  @@index([companyId])
+  @@index([companyId, clientId])
+  @@index([companyId, status])
+  @@index([expiresAt])
+  @@map("client_packages")
 }

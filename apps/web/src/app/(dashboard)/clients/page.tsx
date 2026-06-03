@@ -5,10 +5,12 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import {
-  Plus, Search, MoreHorizontal, Pencil, Ban, ShieldCheck, Loader2, Trash2,
+  Plus, Search, MoreHorizontal, Pencil, Ban, ShieldCheck, Loader2, Trash2, BotOff, Bot,
 } from 'lucide-react';
 
-import { useClients, useCreateClient, useUpdateClient, useBlockClient, useUnblockClient, useDeleteClient } from '@/hooks/api/use-clients';
+import { useClients, useCreateClient, useUpdateClient, useBlockClient, useUnblockClient, useDeleteClient, useToggleClientBot } from '@/hooks/api/use-clients';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import type { Client } from '@/hooks/api/use-clients';
 import { createClientSchema, type CreateClientFormData } from '@/schemas';
 import { formatPhone } from '@/lib/utils';
@@ -48,6 +50,12 @@ export default function ClientsPage() {
   const blockMutation = useBlockClient();
   const unblockMutation = useUnblockClient();
   const deleteMutation = useDeleteClient();
+  const toggleBotMutation = useToggleClientBot();
+  const { data: disabledBots = [] } = useQuery<{ whatsappNumber: string }[]>({
+    queryKey: ['whatsapp-bot-disabled'],
+    queryFn: () => api.get('/whatsapp/bot/disabled').then((r) => r.data),
+  });
+  const disabledSet = new Set(disabledBots.map((b) => b.whatsappNumber));
 
   const form = useForm<CreateClientFormData>({
     resolver: zodResolver(createClientSchema),
@@ -103,6 +111,16 @@ export default function ClientsPage() {
       setBlockReason('');
     } catch {
       toast.error('Erro ao bloquear cliente');
+    }
+  }
+
+  async function handleToggleBot(client: Client) {
+    const currentlyDisabled = disabledSet.has(client.whatsappNumber);
+    try {
+      await toggleBotMutation.mutateAsync({ whatsappNumber: client.whatsappNumber, disabled: !currentlyDisabled });
+      toast.success(currentlyDisabled ? 'Bot reativado' : 'Bot desativado para este cliente');
+    } catch {
+      toast.error('Erro ao alterar bot');
     }
   }
 
@@ -186,9 +204,14 @@ export default function ClientsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              clients.map((client) => (
+              clients.map((client) => {
+                const botOff = disabledSet.has(client.whatsappNumber);
+                return (
                 <TableRow key={client.id}>
-                  <TableCell className="font-medium">{client.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className={botOff ? 'text-muted-foreground/50' : undefined}>{client.name}</span>
+                    {botOff && <span className="ml-2 text-[10px] text-muted-foreground/50">bot off</span>}
+                  </TableCell>
                   <TableCell>{formatPhone(client.whatsappNumber)}</TableCell>
                   <TableCell className="text-muted-foreground">{client.email ?? '—'}</TableCell>
                   <TableCell className="text-center">{client.totalAppointments}</TableCell>
@@ -222,6 +245,11 @@ export default function ClientsPage() {
                             <Ban className="mr-2 h-4 w-4" /> Bloquear
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuItem onClick={() => handleToggleBot(client)}>
+                          {disabledSet.has(client.whatsappNumber)
+                            ? <><Bot className="mr-2 h-4 w-4" /> Ativar bot</>
+                            : <><BotOff className="mr-2 h-4 w-4" /> Desativar bot</>}
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={() => { setDeleteTarget(client); setDeleteDialogOpen(true); }}
@@ -233,7 +261,7 @@ export default function ClientsPage() {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+              )})
             )}
           </TableBody>
         </Table>

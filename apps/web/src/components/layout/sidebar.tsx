@@ -15,6 +15,7 @@ import {
   ListOrdered,
   ScrollText,
   X,
+  Package,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/providers/sidebar-provider';
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/collaborators', label: 'Colaboradores', icon: Users },
   { href: '/clients', label: 'Clientes', icon: UserRound },
   { href: '/services', label: 'Serviços', icon: Briefcase },
+  { href: '/packages', label: 'Pacotes', icon: Package },
   { href: '/schedule', label: 'Horários', icon: Clock },
   { href: '/reports', label: 'Relatórios', icon: BarChart3 },
   { href: '/audit-logs', label: 'Auditoria', icon: ScrollText },

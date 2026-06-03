@@ -68,4 +68,8 @@ export class UpdateWhatsappConfigDto {
   @IsOptional()
   @IsBoolean()
   allowMultipleServices?: boolean;
+
+  @IsOptional()
+  @IsString()
+  aiPersonality?: string;
 }
