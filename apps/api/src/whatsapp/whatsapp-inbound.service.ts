@@ -245,6 +245,12 @@ export class WhatsappInboundService {
       return;
     }
 
+    // ── Bot desativado manualmente para esta conversa ─────────────────────────
+    if (state.botDisabled) {
+      this.logger.debug(`Bot desativado para ${lookupNumber} — mensagem ignorada`);
+      return;
+    }
+
     // ── AI interpreter (staging / when GROQ_API_KEY is set) ──────────────────
     if (this.aiService.isEnabled) {
       const aiCtx = (state.context ?? {}) as Record<string, unknown>;

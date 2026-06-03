@@ -93,3 +93,10 @@ export function useDeleteClient() {
     },
   });
 }
+
+export function useToggleClientBot() {
+  return useMutation({
+    mutationFn: ({ whatsappNumber, disabled }: { whatsappNumber: string; disabled: boolean }) =>
+      api.patch(`/whatsapp/bot/${whatsappNumber}`, { disabled }).then((res) => res.data),
+  });
+}

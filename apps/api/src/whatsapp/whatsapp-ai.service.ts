@@ -248,6 +248,7 @@ export class WhatsappAiService {
       { type: 'function', function: { name: 'cancel_appointment', description: 'Cancela agendamento pelo ID', parameters: { type: 'object', properties: { appointment_id: { type: 'string' } }, required: ['appointment_id'] } } },
       { type: 'function', function: { name: 'get_next_appointment_info', description: 'Retorna próximo agendamento e tempo restante. Use para "falta quanto tempo?", "quando é meu horário?"', parameters: { type: 'object', properties: {}, required: [] } } },
       { type: 'function', function: { name: 'check_client_packages', description: 'Verifica pacotes ativos do cliente. Use quando o cliente pergunta sobre seus pacotes, créditos ou saldo.', parameters: { type: 'object', properties: {}, required: [] } } },
+      { type: 'function', function: { name: 'list_available_packages', description: 'Lista pacotes disponíveis para compra. Use quando o cliente pergunta sobre pacotes, promoções ou planos disponíveis.', parameters: { type: 'object', properties: {}, required: [] } } },
       {
         type: 'function', function: {
           name: 'book_multiple_appointments',
@@ -507,6 +508,25 @@ export class WhatsappAiService {
         } catch {
           return { error: 'Horário indisponível para um dos serviços. Tente outro horário.' };
         }
+      }
+
+      case 'list_available_packages': {
+        const pkgs = await this.prisma.servicePackage.findMany({
+          where: { companyId, isActive: true },
+          select: { name: true, description: true, credits: true, price: true, validityDays: true, creditMode: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (pkgs.length === 0) return { packages: [], message: 'Nenhum pacote disponível no momento.' };
+        return {
+          packages: pkgs.map((p) => ({
+            name: p.name,
+            description: p.description ?? null,
+            credits: p.credits,
+            price: `R$ ${Number(p.price).toFixed(2).replace('.', ',')}`,
+            validity_days: p.validityDays,
+            credit_mode: p.creditMode === 'PER_VISIT' ? 'por visita' : 'por serviço',
+          })),
+        };
       }
 
       case 'check_client_packages': {
