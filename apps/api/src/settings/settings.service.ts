@@ -110,32 +110,40 @@ export class SettingsService {
         updatedAt: true,
       },
     });
-    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
-    return config;
+    return config ?? null;
   }
 
   async updateWhatsappConfig(companyId: string, dto: UpdateWhatsappConfigDto, userId: string) {
-    const existing = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-    if (!existing) throw new NotFoundException('Configuração WhatsApp não encontrada');
+    const configData = {
+      greetingMessage: dto.greetingMessage,
+      scheduleConfirmMsg: dto.scheduleConfirmMsg,
+      reminderMessage: dto.reminderMessage,
+      cancellationMessage: dto.cancellationMessage,
+      queueCalledMessage: dto.queueCalledMessage,
+      ...(dto.reminderRules !== undefined ? { reminderRules: JSON.parse(JSON.stringify(dto.reminderRules)) } : {}),
+      ...(dto.autoConfirmEnabled !== undefined ? { autoConfirmEnabled: dto.autoConfirmEnabled } : {}),
+      ...(dto.autoConfirmHours !== undefined ? { autoConfirmHours: dto.autoConfirmHours } : {}),
+      ...(dto.dailyReminderEnabled !== undefined ? { dailyReminderEnabled: dto.dailyReminderEnabled } : {}),
+      ...(dto.dailyReminderTime !== undefined ? { dailyReminderTime: dto.dailyReminderTime } : {}),
+      ...(dto.dailyReminderMessage !== undefined ? { dailyReminderMessage: dto.dailyReminderMessage } : {}),
+      ...(dto.skipCollaboratorSelection !== undefined ? { skipCollaboratorSelection: dto.skipCollaboratorSelection } : {}),
+      ...(dto.allowMultipleServices !== undefined ? { allowMultipleServices: dto.allowMultipleServices } : {}),
+      ...(dto.aiPersonality !== undefined ? { aiPersonality: dto.aiPersonality } : {}),
+    };
 
-    const updated = await this.prisma.whatsappConfig.update({
+    // Auto-generate instanceName from company slug for new tenants
+    const company = await this.prisma.company.findUnique({ where: { id: companyId }, select: { slug: true } });
+    const instanceName = `tenant_${company?.slug ?? companyId.slice(0, 8)}`;
+
+    const updated = await this.prisma.whatsappConfig.upsert({
       where: { companyId },
-      data: {
-        greetingMessage: dto.greetingMessage,
-        scheduleConfirmMsg: dto.scheduleConfirmMsg,
-        reminderMessage: dto.reminderMessage,
-        cancellationMessage: dto.cancellationMessage,
-        queueCalledMessage: dto.queueCalledMessage,
-        ...(dto.reminderRules !== undefined ? { reminderRules: JSON.parse(JSON.stringify(dto.reminderRules)) } : {}),
-        ...(dto.autoConfirmEnabled !== undefined ? { autoConfirmEnabled: dto.autoConfirmEnabled } : {}),
-        ...(dto.autoConfirmHours !== undefined ? { autoConfirmHours: dto.autoConfirmHours } : {}),
-        ...(dto.dailyReminderEnabled !== undefined ? { dailyReminderEnabled: dto.dailyReminderEnabled } : {}),
-        ...(dto.dailyReminderTime !== undefined ? { dailyReminderTime: dto.dailyReminderTime } : {}),
-        ...(dto.dailyReminderMessage !== undefined ? { dailyReminderMessage: dto.dailyReminderMessage } : {}),
-        ...(dto.skipCollaboratorSelection !== undefined ? { skipCollaboratorSelection: dto.skipCollaboratorSelection } : {}),
-        ...(dto.allowMultipleServices !== undefined ? { allowMultipleServices: dto.allowMultipleServices } : {}),
-        ...(dto.aiPersonality !== undefined ? { aiPersonality: dto.aiPersonality } : {}),
+      create: {
+        companyId,
+        instanceName,
+        instanceKey: instanceName,
+        ...configData,
       },
+      update: configData,
     });
 
     await this.audit.log({
@@ -143,7 +151,7 @@ export class SettingsService {
       userId,
       action: AuditAction.SETTINGS_UPDATED,
       entity: 'WhatsappConfig',
-      entityId: existing.id,
+      entityId: updated.id,
       newValue: dto as unknown as Record<string, unknown>,
     });
 
@@ -156,7 +164,7 @@ export class SettingsService {
 
   async getConnectionStatus(companyId: string) {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
+    if (!config) return { isConnected: false, state: 'not_configured' };
 
     try {
       const res = await axios.get(
@@ -181,7 +189,7 @@ export class SettingsService {
 
   async generateQr(companyId: string) {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
+    if (!config) return { qrcode: null, error: 'Configure o WhatsApp nas configurações antes de gerar o QR Code.' };
 
     const h = this.evoHeaders();
     const name = config.instanceName;
@@ -308,7 +316,7 @@ export class SettingsService {
 
   async disconnectWhatsapp(companyId: string) {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
+    if (!config) return { disconnected: true };
 
     try {
       await axios.delete(
@@ -329,7 +337,7 @@ export class SettingsService {
 
   async generatePairingCode(companyId: string, phoneNumber: string) {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
-    if (!config) throw new NotFoundException('Configuração WhatsApp não encontrada');
+    if (!config) return { code: null, error: 'Configure o WhatsApp nas configurações antes de gerar o código.' };
 
     const h = this.evoHeaders();
     const name = config.instanceName;
