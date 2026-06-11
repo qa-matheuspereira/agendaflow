@@ -1,10 +1,15 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Client-side: use relative URL so Next.js proxy handles routing to the API
+// Server-side (SSR): use absolute URL directly to the API container
+const isClient = typeof window !== 'undefined';
+const API_URL = isClient
+  ? '/api'
+  : `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1`;
 
 export const api: AxiosInstance = axios.create({
-  baseURL: `${API_URL}/api/v1`,
+  baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
   timeout: 15000,
 });
@@ -47,7 +52,7 @@ api.interceptors.response.use(
           accessToken: string;
           refreshToken: string;
           user: import('@agendaflow/shared').AuthenticatedUser;
-        }>(`${API_URL}/api/v1/auth/refresh`, { refreshToken });
+        }>(`${isClient ? '/api' : `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/v1`}/auth/refresh`, { refreshToken });
 
         setAuth(data.user, data.accessToken, data.refreshToken);
 
