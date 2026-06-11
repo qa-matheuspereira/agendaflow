@@ -214,13 +214,16 @@ export class SettingsService {
         : null;
       this.logger.warn(`[QR] Webhook URL: ${webhookUrl ?? 'NÃO CONFIGURADO (API_BASE_URL ausente)'}`);
 
-      // Evolution API v2.x: integration field required + webhook via separate endpoint
       const createPayload: Record<string, unknown> = {
         instanceName: name,
         token: `${name}-${Date.now()}`,
-        integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
       };
+      if (webhookUrl) {
+        createPayload.webhook = webhookUrl;
+        createPayload.webhook_by_events = false;
+        createPayload.events = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+      }
 
       const res = await axios.post(
         `${this.evolutionUrl}/instance/create`,
@@ -230,26 +233,6 @@ export class SettingsService {
       this.logger.warn(`[QR] CREATE ${name} → ${res.status} | keys: ${Object.keys(res.data ?? {})} | dataLen: ${JSON.stringify(res.data).length}`);
       this.logger.warn(`[QR] CREATE data: ${JSON.stringify(res.data).slice(0, 800)}`);
 
-      // v2.x: set webhook via separate endpoint after instance creation
-      if (webhookUrl) {
-        try {
-          await axios.post(
-            `${this.evolutionUrl}/webhook/set/${name}`,
-            {
-              url: webhookUrl,
-              byEvents: false,
-              base64: false,
-              enabled: true,
-              events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
-            },
-            { headers: h, timeout: 10000 },
-          );
-          this.logger.warn(`[QR] Webhook configurado: ${webhookUrl}`);
-        } catch (we: unknown) {
-          const wm = axios.isAxiosError(we) ? `${we.response?.status}` : String(we);
-          this.logger.warn(`[QR] Webhook set falhou (não crítico): ${wm}`);
-        }
-      }
 
       const qr = this.findQr(res.data);
       if (qr) {
@@ -376,7 +359,7 @@ export class SettingsService {
 
     await new Promise((r) => setTimeout(r, 2000));
 
-    // 2) Criar instância sem qrcode (v2.x: integration required + webhook via separate endpoint)
+    // 2) Criar instância sem qrcode
     try {
       const webhookUrl = this.apiBaseUrl?.startsWith('http')
         ? `${this.apiBaseUrl}/whatsapp/webhook`
@@ -385,31 +368,19 @@ export class SettingsService {
       const createPayload: Record<string, unknown> = {
         instanceName: name,
         token: `${name}-${Date.now()}`,
-        integration: 'WHATSAPP-BAILEYS',
         qrcode: false,
       };
+      if (webhookUrl) {
+        createPayload.webhook = webhookUrl;
+        createPayload.webhook_by_events = false;
+        createPayload.events = ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+      }
 
       await axios.post(
         `${this.evolutionUrl}/instance/create`,
         createPayload,
         { headers: h, timeout: 30000 },
       );
-
-      if (webhookUrl) {
-        try {
-          await axios.post(
-            `${this.evolutionUrl}/webhook/set/${name}`,
-            {
-              url: webhookUrl,
-              byEvents: false,
-              base64: false,
-              enabled: true,
-              events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE'],
-            },
-            { headers: h, timeout: 10000 },
-          );
-        } catch { /* não crítico */ }
-      }
     } catch (e: unknown) {
       const msg = axios.isAxiosError(e)
         ? `status=${e.response?.status} body=${JSON.stringify(e.response?.data).slice(0, 300)}`
@@ -418,14 +389,15 @@ export class SettingsService {
       return { code: null, error: `Falha ao criar instância: ${msg}` };
     }
 
-    // 3) v2.x pairing code: POST /instance/pairingCode/{name} with number in body
+    // 3) GET /instance/connect?number={phone} para solicitar pairing code
     await new Promise((r) => setTimeout(r, 1500));
     try {
-      const res = await axios.post(`${this.evolutionUrl}/instance/pairingCode/${name}`, { number: cleanPhone }, {
+      const res = await axios.get(`${this.evolutionUrl}/instance/connect/${name}`, {
         headers: h,
+        params: { number: cleanPhone },
         timeout: 15000,
       });
-      this.logger.warn(`[PAIRING] pairingCode response: ${JSON.stringify(res.data).slice(0, 400)}`);
+      this.logger.warn(`[PAIRING] connect?number response: ${JSON.stringify(res.data).slice(0, 400)}`);
 
       const code: string =
         res.data?.code ??
@@ -435,7 +407,7 @@ export class SettingsService {
         null;
 
       if (code && !code.startsWith('data:image') && code.length < 20) {
-        this.logger.warn(`[PAIRING] ✅ Código obtido: ${code}`);
+        this.logger.warn(`[PAIRING] ✅ Código obtido via connect: ${code}`);
         return { code };
       }
 

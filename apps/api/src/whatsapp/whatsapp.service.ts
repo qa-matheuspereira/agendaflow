@@ -41,11 +41,10 @@ export class WhatsappService {
   }
 
   async sendText(instanceName: string, toNumber: string, message: string): Promise<string | null> {
-    // Evolution API v2.x payload: { number, text } (v1.x used textMessage.text wrapper)
     const tryNumber = async (num: string): Promise<string | null> => {
       const response = await this.http.post<EvolutionSendResponse>(
         `/message/sendText/${instanceName}`,
-        { number: num, text: message },
+        { number: num, textMessage: { text: message } },
       );
       return response.data?.key?.id ?? null;
     };
