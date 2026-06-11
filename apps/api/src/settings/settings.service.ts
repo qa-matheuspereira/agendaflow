@@ -216,7 +216,7 @@ export class SettingsService {
 
       const createPayload: Record<string, unknown> = {
         instanceName: name,
-        // token omitido — Evolution API gera automaticamente (evita conflito "token já existe")
+        token: `${name}-${Date.now()}`, // unique per attempt — avoids "Token already exists"
         qrcode: true,
       };
       if (webhookUrl) {
@@ -366,7 +366,7 @@ export class SettingsService {
 
       const createPayload: Record<string, unknown> = {
         instanceName: name,
-        // token omitido — Evolution API gera automaticamente (evita conflito "token já existe")
+        token: `${name}-${Date.now()}`, // unique per attempt — avoids "Token already exists"
         qrcode: false,
       };
       if (webhookUrl) {
