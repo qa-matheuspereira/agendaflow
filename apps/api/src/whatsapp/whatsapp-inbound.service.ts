@@ -133,9 +133,9 @@ export class WhatsappInboundService {
       if (resolvedPhone) lookupNumber = resolvedPhone;
     }
 
-    // Prefer sending to the resolved real number; fall back to @lid JID only if unresolved.
-    // Using the real number ensures clients are stored/displayed with correct phone in the panel.
-    const sendNumber = resolvedPhone ?? rawNumber;
+    // For @lid contacts: send to the @lid JID directly — Evolution API v2.x handles this natively.
+    // resolvedPhone from whatsappNumbers is a LID-derived numeric ID (not a real phone), so skip it.
+    const sendNumber = isLid ? rawNumber : (resolvedPhone ?? rawNumber);
 
     this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber} resolvedPhone=${resolvedPhone}`);
 

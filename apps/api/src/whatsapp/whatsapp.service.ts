@@ -41,10 +41,11 @@ export class WhatsappService {
   }
 
   async sendText(instanceName: string, toNumber: string, message: string): Promise<string | null> {
+    // Evolution API v2.x payload: { number, text } (v1.x used textMessage.text wrapper)
     const tryNumber = async (num: string): Promise<string | null> => {
       const response = await this.http.post<EvolutionSendResponse>(
         `/message/sendText/${instanceName}`,
-        { number: num, textMessage: { text: message } },
+        { number: num, text: message },
       );
       return response.data?.key?.id ?? null;
     };
@@ -60,19 +61,19 @@ export class WhatsappService {
         const bodyStr = JSON.stringify(body);
         this.logger.warn(`[SEND] sendText falhou para ${toNumber} (${instanceName}) status=${status}: ${bodyStr}`);
 
-        // Fallback chain for @lid contacts (WhatsApp privacy system — numeric LID ≠ real phone)
+        // Fallback chain for @lid contacts (Evolution API v2.x handles @lid natively)
         const isExistsError = bodyStr.includes('exists') && bodyStr.includes('false');
-        const bareNumber = toNumber.replace(/@\w+\.net$/, '').replace(/@lid$/, '');
+        const bareNumber = toNumber.replace(/@[\w.]+$/, '');
         const isAlreadyLid = toNumber.includes('@lid');
         const isAlreadySwn = toNumber.includes('@s.whatsapp.net');
 
-        // 1) Try @s.whatsapp.net JID directly (bypasses onWhatsApp check on some versions)
+        // 1) @s.whatsapp.net JID — v2.x can send to full JID bypassing onWhatsApp check
         if (isExistsError && !isAlreadySwn) {
           const swnFallback = `${bareNumber}@s.whatsapp.net`;
-          this.logger.warn(`[SEND] Tentando fallback @s.whatsapp.net: ${swnFallback}`);
+          this.logger.warn(`[SEND] Tentando @s.whatsapp.net: ${swnFallback}`);
           try {
             const msgId = await tryNumber(swnFallback);
-            this.logger.warn(`[SEND] ✅ Enviado via @s.whatsapp.net fallback: ${swnFallback}`);
+            this.logger.warn(`[SEND] ✅ Enviado via @s.whatsapp.net: ${swnFallback}`);
             return msgId;
           } catch (e2) {
             if (isAxiosError(e2)) {
@@ -81,17 +82,17 @@ export class WhatsappService {
           }
         }
 
-        // 2) Try @lid JID directly
+        // 2) @lid JID — v2.x supports sending directly to @lid
         if (isExistsError && !isAlreadyLid) {
           const lidFallback = `${bareNumber}@lid`;
-          this.logger.warn(`[SEND] Tentando fallback @lid: ${lidFallback}`);
+          this.logger.warn(`[SEND] Tentando @lid: ${lidFallback}`);
           try {
             const msgId = await tryNumber(lidFallback);
-            this.logger.warn(`[SEND] ✅ Enviado via @lid fallback: ${lidFallback}`);
+            this.logger.warn(`[SEND] ✅ Enviado via @lid: ${lidFallback}`);
             return msgId;
           } catch (e2) {
             if (isAxiosError(e2)) {
-              this.logger.warn(`[SEND] @lid fallback também falhou: ${e2.response?.status}: ${JSON.stringify(e2.response?.data)}`);
+              this.logger.warn(`[SEND] @lid falhou: ${e2.response?.status}: ${JSON.stringify(e2.response?.data)}`);
             }
           }
         }
