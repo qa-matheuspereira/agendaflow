@@ -318,13 +318,20 @@ export class SettingsService {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { companyId } });
     if (!config) return { disconnected: true };
 
+    const h = this.evoHeaders();
+    const name = config.instanceName;
+
     try {
-      await axios.delete(
-        `${this.evolutionUrl}/instance/logout/${config.instanceName}`,
-        { headers: this.evoHeaders(), timeout: 5000 },
-      );
-    } catch {
-      // ignore — update DB regardless
+      await axios.delete(`${this.evolutionUrl}/instance/logout/${name}`, { headers: h, timeout: 5000 });
+    } catch { /* ignore */ }
+
+    // Delete instance completely so next connect starts fresh with no token conflict
+    try {
+      await axios.delete(`${this.evolutionUrl}/instance/delete/${name}`, { headers: h, timeout: 5000 });
+      this.logger.log(`[DISCONNECT] Instância ${name} deletada`);
+    } catch (e: unknown) {
+      const msg = axios.isAxiosError(e) ? `${e.response?.status}` : String(e);
+      this.logger.warn(`[DISCONNECT] DELETE ${name} → ${msg}`);
     }
 
     await this.prisma.whatsappConfig.update({
