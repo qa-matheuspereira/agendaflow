@@ -64,6 +64,7 @@ function conversationExpiresAt(): Date {
 @Injectable()
 export class WhatsappInboundService {
   private readonly logger = new Logger(WhatsappInboundService.name);
+  private readonly processingIds = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -88,11 +89,20 @@ export class WhatsappInboundService {
     const messageText = extractText(data);
     if (!messageText) return;
 
-    // ── Deduplicação por messageId ────────────────────────────────────────────
-    // A Evolution API pode reenviar o webhook se o servidor demorar muito a responder.
-    // Guardamos o último messageId processado no contexto da conversa e ignoramos duplicatas.
     const messageId = data.key.id;
 
+    // ── Deduplicação por messageId ────────────────────────────────────────────
+    // In-memory lock prevents duplicate processing when Evolution API retries the webhook
+    // while AI is still processing (race condition in DB-based dedup).
+    if (messageId) {
+      if (this.processingIds.has(messageId)) {
+        this.logger.warn(`[DEDUP] ${messageId} já em processamento — ignorado`);
+        return;
+      }
+      this.processingIds.add(messageId);
+    }
+
+    try {
     const config = await this.prisma.whatsappConfig.findUnique({ where: { instanceName } });
     if (!config) {
       this.logger.warn(`Webhook recebido para instância não registrada: ${instanceName}`);
@@ -371,6 +381,9 @@ export class WhatsappInboundService {
     } else {
       // Não bloqueia o handler — saudação enviada sem delay bloqueante
       void this.clientBot.handleUnknown(instanceName, sendNumber, config, config.companyId);
+    }
+    } finally {
+      if (messageId) this.processingIds.delete(messageId);
     }
   }
 
