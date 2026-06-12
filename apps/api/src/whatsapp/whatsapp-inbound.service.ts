@@ -133,13 +133,6 @@ export class WhatsappInboundService {
       if (resolvedPhone) lookupNumber = resolvedPhone;
     }
 
-    // Use resolvedPhone only when it's a real phone (differs from the LID numeric ID).
-    // If resolution failed or returned the LID numeric ID itself, fall back to the @lid JID.
-    const resolvedIsReal = !!resolvedPhone && resolvedPhone !== rawLidNumber;
-    const sendNumber = resolvedIsReal ? (resolvedPhone as string) : rawNumber;
-
-    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber} resolvedPhone=${resolvedPhone}`);
-
     const altNumber = brazilianAlternate(lookupNumber);
     const numberVariants = altNumber ? [lookupNumber, altNumber] : [lookupNumber];
 
@@ -155,13 +148,14 @@ export class WhatsappInboundService {
         }
       : { companyId: config.companyId, whatsappNumber: { in: numberVariants }, isActive: true };
 
-    // Para @lid: também busca pelo rawNumber armazenado (ex: '15930184695888@lid')
-    const clientWhere = isLid
+    // Para @lid: busca por telefone, @lid JID ou whatsappLid salvo no banco
+    const clientWhere = rawLidNumber
       ? {
           companyId: config.companyId,
           OR: [
             { whatsappNumber: { in: numberVariants } },
             { whatsappNumber: rawNumber },
+            { whatsappLid: rawLidNumber },
           ],
         }
       : { companyId: config.companyId, whatsappNumber: { in: numberVariants } };
@@ -173,9 +167,19 @@ export class WhatsappInboundService {
       }),
       this.prisma.client.findFirst({
         where: clientWhere,
-        select: { id: true, name: true, isBlocked: true, whatsappNumber: true },
+        select: { id: true, name: true, isBlocked: true, whatsappNumber: true, whatsappLid: true },
       }),
     ]);
+
+    // sendNumber: prefer resolvedPhone > client stored phone > @lid JID
+    // When client found via whatsappLid, their whatsappNumber is the real phone
+    const clientRealPhone = (client && isLid && client.whatsappNumber && !client.whatsappNumber.includes('@') && client.whatsappNumber !== rawLidNumber)
+      ? client.whatsappNumber
+      : null;
+    const resolvedIsReal = !!resolvedPhone && resolvedPhone !== rawLidNumber;
+    const sendNumber = resolvedIsReal ? (resolvedPhone as string) : (clientRealPhone ?? rawNumber);
+
+    this.logger.debug(`Lookup: rawJid=${data.key.remoteJid} lookupNumber=${lookupNumber} sendNumber=${sendNumber} resolvedPhone=${resolvedPhone}`);
 
     this.logger.debug(`Resolved: collaborator=${collaborator?.name ?? 'NOT FOUND'} client=${client?.name ?? 'NOT FOUND'}`);
 
@@ -187,8 +191,15 @@ export class WhatsappInboundService {
       }).catch(() => { /* non-critical */ });
     }
 
+    // Persiste o @lid no cliente — resolve problema de sessão zerada na nova VPS
+    if (client && rawLidNumber && !client.whatsappLid) {
+      this.prisma.client.update({
+        where: { id: client.id },
+        data: { whatsappLid: rawLidNumber },
+      }).catch(() => { /* non-critical */ });
+    }
+
     // Migra cliente com número @lid armazenado para o número real quando resolvido.
-    // Garante que o painel exiba o número correto e notificações sejam entregues.
     if (client && resolvedPhone && client.whatsappNumber !== resolvedPhone) {
       this.prisma.client.update({
         where: { id: client.id },

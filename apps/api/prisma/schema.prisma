@@ -244,6 +244,7 @@ model Client {
   companyId      String
   name           String
   whatsappNumber String
+  whatsappLid    String?
   email          String?
   birthdate      DateTime?
   notes          String?
@@ -268,6 +269,7 @@ model Client {
   @@unique([companyId, whatsappNumber])
   @@index([companyId])
   @@index([whatsappNumber])
+  @@index([whatsappLid])
   @@index([companyId, isBlocked])
   @@map("clients")
 }
