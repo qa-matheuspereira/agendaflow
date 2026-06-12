@@ -133,8 +133,32 @@ export class WhatsappService {
 
     this.logger.warn(`[LID] Tentando resolver ${lidJid} para ${instanceName}`);
 
-    // Estratégia 1: POST /chat/whatsappNumbers — chama onWhatsApp() do Baileys
-    // Resolve @lid para o JID real via query ao servidor WhatsApp
+    // Helper: valida que o telefone é um número real, não o próprio LID numérico
+    const lidBareId = lidJid.split('@')[0];
+    const isRealPhone = (phone: string) =>
+      /^\d{8,15}$/.test(phone) && phone !== lidBareId;
+
+    // Estratégia 1: findContacts pelo campo 'lid' — funciona após sync do histórico
+    try {
+      const resp = await this.http.post<Array<{ wuid?: string; id?: string; number?: string; lid?: string }>>(
+        `/contact/findContacts/${instanceName}`,
+        { where: { lid: lidJid } },
+      );
+      const contacts = Array.isArray(resp.data) ? resp.data : [];
+      this.logger.warn(`[LID] findContacts(lid) response: ${JSON.stringify(contacts)}`);
+      for (const c of contacts) {
+        const wuid: string = c.id ?? c.wuid ?? '';
+        if (wuid.includes('@lid')) continue;
+        const phone = wuid.includes('@') ? wuid.split('@')[0] : (c.number ?? '');
+        if (isRealPhone(phone)) {
+          this.lidCache.set(cacheKey, phone);
+          this.logger.warn(`[LID] ✅ Resolvido via findContacts(lid): ${lidJid} → ${phone}`);
+          return phone;
+        }
+      }
+    } catch { /* ignora */ }
+
+    // Estratégia 2: POST /chat/whatsappNumbers — chama onWhatsApp() do Baileys
     try {
       const resp = await this.http.post<Array<{ exists?: boolean; jid?: string; number?: string }>>(
         `/chat/whatsappNumbers/${instanceName}`,
@@ -144,8 +168,9 @@ export class WhatsappService {
       this.logger.warn(`[LID] whatsappNumbers response: ${JSON.stringify(entries)}`);
       for (const entry of entries) {
         const jid: string = entry.jid ?? '';
+        if (jid.includes('@lid')) continue; // LID numérico, não é telefone real
         const phone = jid.includes('@') ? jid.split('@')[0] : '';
-        if (phone && /^\d{8,15}$/.test(phone)) {
+        if (isRealPhone(phone)) {
           this.lidCache.set(cacheKey, phone);
           this.logger.warn(`[LID] ✅ Resolvido via whatsappNumbers: ${lidJid} → ${phone}`);
           return phone;
@@ -156,7 +181,7 @@ export class WhatsappService {
       this.logger.warn(`[LID] whatsappNumbers falhou: ${msg}`);
     }
 
-    // Estratégia 2: GET /contact/fetchProfile com o @lid inteiro
+    // Estratégia 3: GET /contact/fetchProfile com o @lid inteiro
     try {
       const resp = await this.http.get<{ wuid?: string; number?: string }>(
         `/contact/fetchProfile/${instanceName}`,
@@ -164,31 +189,34 @@ export class WhatsappService {
       );
       this.logger.warn(`[LID] fetchProfile response: ${JSON.stringify(resp.data)}`);
       const wuid: string = resp.data?.wuid ?? '';
-      const phone = wuid.includes('@') ? wuid.split('@')[0] : (resp.data?.number ?? '');
-      if (phone && /^\d{8,15}$/.test(phone)) {
-        this.lidCache.set(cacheKey, phone);
-        this.logger.warn(`[LID] ✅ Resolvido via fetchProfile: ${lidJid} → ${phone}`);
-        return phone;
+      if (!wuid.includes('@lid')) {
+        const phone = wuid.includes('@') ? wuid.split('@')[0] : (resp.data?.number ?? '');
+        if (isRealPhone(phone)) {
+          this.lidCache.set(cacheKey, phone);
+          this.logger.warn(`[LID] ✅ Resolvido via fetchProfile: ${lidJid} → ${phone}`);
+          return phone;
+        }
       }
     } catch (err) {
       const msg = isAxiosError(err) ? `${err.response?.status}` : String(err);
       this.logger.warn(`[LID] fetchProfile falhou: ${msg}`);
     }
 
-    // Estratégia 3: POST /contact/findContacts — busca nos contatos armazenados
+    // Estratégia 4: findContacts pelo campo 'id' (fallback)
     try {
       const resp = await this.http.post<Array<{ wuid?: string; number?: string; id?: string }>>(
         `/contact/findContacts/${instanceName}`,
         { where: { id: lidJid } },
       );
       const contacts = Array.isArray(resp.data) ? resp.data : [];
-      this.logger.warn(`[LID] findContacts response: ${JSON.stringify(contacts)}`);
+      this.logger.warn(`[LID] findContacts(id) response: ${JSON.stringify(contacts)}`);
       for (const c of contacts) {
         const wuid: string = c.wuid ?? '';
+        if (wuid.includes('@lid')) continue;
         const phone = wuid.includes('@') ? wuid.split('@')[0] : (c.number ?? '');
-        if (phone && /^\d{8,15}$/.test(phone)) {
+        if (isRealPhone(phone)) {
           this.lidCache.set(cacheKey, phone);
-          this.logger.warn(`[LID] ✅ Resolvido via findContacts: ${lidJid} → ${phone}`);
+          this.logger.warn(`[LID] ✅ Resolvido via findContacts(id): ${lidJid} → ${phone}`);
           return phone;
         }
       }
