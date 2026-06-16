@@ -50,7 +50,7 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: 
     '4. NUNCA invente serviços, horários ou dados. Use SOMENTE os retornados pelas ferramentas.',
     '5. NUNCA mostre IDs (UUIDs) ao usuário.',
     '6. NUNCA escreva o nome de uma ferramenta/função na resposta (ex: "(list_services)"). Apenas chame a ferramenta diretamente, sem anunciar ou pedir permissão antes.',
-    '7. NUNCA pergunte "um ou mais serviços?" ou similar. Pergunte direto "Qual serviço você deseja?" — identifique múltiplos serviços pela resposta do cliente, não por pergunta extra.',
+    '7. NUNCA pergunte "um ou mais serviços?" ou similar. Se o cliente NÃO mencionou nenhum serviço, mostre a lista e pergunte "Qual serviço você deseja?". Se já mencionou (um ou vários), NÃO pergunte nada sobre serviço — vá direto para data/horário.',
     '',
     '━━ FLUXO OBRIGATÓRIO ━━',
     clientName
@@ -65,9 +65,11 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: 
     'QUANDO cliente quiser AGENDAR/MARCAR/MARCAR HORÁRIO ou perguntar sobre disponibilidade:',
     '  ANTES DE TUDO: se não tiver o nome do cliente, peça o nome primeiro. Só depois continue.',
     '',
-    '  ⚠️ DETECÇÃO OBRIGATÓRIA: quantos serviços o cliente mencionou?',
-    '  • DOIS OU MAIS serviços → use FLUXO MÚLTIPLOS SERVIÇOS abaixo. NÃO use o fluxo de serviço único.',
-    '  • UM serviço → use FLUXO SERVIÇO ÚNICO abaixo.',
+    '  ⚠️ DETECÇÃO OBRIGATÓRIA: o cliente já mencionou serviço(s) nesta mensagem?',
+    '  • Mencionou DOIS OU MAIS serviços → FLUXO MÚLTIPLOS SERVIÇOS. Vá direto para data/horário, SEM perguntar qual serviço.',
+    '  • Mencionou UM serviço → FLUXO SERVIÇO ÚNICO, PASSO 2 direto (pule o PASSO 1, já sabe o serviço).',
+    '  • NÃO mencionou nenhum serviço (ex: "quero agendar", "marcar horário") → FLUXO SERVIÇO ÚNICO, PASSO 1 (mostra lista e pergunta).',
+    '  ⛔ Se o cliente já disse o(s) serviço(s) explicitamente, NUNCA pergunte "qual serviço você deseja" — isso já foi respondido.',
     '',
     '━━ FLUXO MÚLTIPLOS SERVIÇOS ━━',
     '  ("corte e barba", "barba e bigode", "corte + hidratação", qualquer combinação de 2+ serviços)',
@@ -545,7 +547,10 @@ export class WhatsappAiService {
           const dateF = `${da}/${mo}/${y}`;
           const totalMin = slots[slots.length - 1].endMin - (h0 * 60 + m0);
           const serviceNames = ordered.map((s) => s.name).join(' + ');
-          const confirmation_message = `*Agendamentos confirmados!* ✅\n\n📅 ${dateF} às ${startTime}\n✂️ ${serviceNames}\n👤 ${collab.name}\n⏱ Duração total: ${totalMin} min`;
+          const customMsgMulti = ctx.config?.scheduleConfirmMsg?.trim();
+          const confirmation_message = customMsgMulti
+            ? applyPlaceholders(customMsgMulti, { nome: ctx.clientName ?? 'Cliente', servico: serviceNames, horario: startTime, profissional: collab.name, data: dateF })
+            : `*Agendamentos confirmados!* ✅\n\n📅 ${dateF} às ${startTime}\n✂️ ${serviceNames}\n👤 ${collab.name}\n⏱ Duração total: ${totalMin} min`;
           return { success: true, confirmation_message, total_minutes: totalMin, services: slots.map((s) => ({ name: s.serviceName, time: s.startTime })) };
         } catch {
           return { error: 'Horário indisponível para um dos serviços. Tente outro horário.' };
