@@ -8,6 +8,7 @@ import { AppointmentStatus, Prisma, type WhatsappConfig } from '@prisma/client';
 import Groq from 'groq-sdk';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'groq-sdk/resources/chat/completions';
 import { differenceInMinutes } from 'date-fns';
+import { brazilianAlternate } from './whatsapp-number.util';
 
 interface AiContext {
   messages: ChatCompletionMessageParam[];
@@ -48,6 +49,8 @@ function buildSystemPrompt(cfg: WhatsappConfig | null | undefined, clientName?: 
     '3. NUNCA use emojis.',
     '4. NUNCA invente serviços, horários ou dados. Use SOMENTE os retornados pelas ferramentas.',
     '5. NUNCA mostre IDs (UUIDs) ao usuário.',
+    '6. NUNCA escreva o nome de uma ferramenta/função na resposta (ex: "(list_services)"). Apenas chame a ferramenta diretamente, sem anunciar ou pedir permissão antes.',
+    '7. NUNCA pergunte "um ou mais serviços?" ou similar. Pergunte direto "Qual serviço você deseja?" — identifique múltiplos serviços pela resposta do cliente, não por pergunta extra.',
     '',
     '━━ FLUXO OBRIGATÓRIO ━━',
     clientName
@@ -307,11 +310,18 @@ export class WhatsappAiService {
       case 'register_client_name': {
         const name = str('name').trim().slice(0, 100);
         if (name.length < 2) return { error: 'Nome muito curto.' };
-        const client = await this.prisma.client.upsert({
-          where: { companyId_whatsappNumber: { companyId, whatsappNumber: ctx.whatsappNumber } },
-          create: { companyId, whatsappNumber: ctx.whatsappNumber, name },
-          update: { name },
+        // Search both Brazilian number variants (with/without 9th digit) to avoid
+        // creating a duplicate client row when the stored format differs from lookup.
+        const altNumber = brazilianAlternate(ctx.whatsappNumber);
+        const existing = await this.prisma.client.findFirst({
+          where: {
+            companyId,
+            whatsappNumber: altNumber ? { in: [ctx.whatsappNumber, altNumber] } : ctx.whatsappNumber,
+          },
         });
+        const client = existing
+          ? await this.prisma.client.update({ where: { id: existing.id }, data: { name } })
+          : await this.prisma.client.create({ data: { companyId, whatsappNumber: ctx.whatsappNumber, name } });
         ctx.clientId = client.id;
         ctx.clientName = name;
         return { success: true, client_id: client.id, name };

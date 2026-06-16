@@ -4,6 +4,7 @@ import { WhatsappService } from './whatsapp.service';
 import { WhatsappClientBotService } from './whatsapp-client-bot.service';
 import { WhatsappCollaboratorBotService } from './whatsapp-collaborator-bot.service';
 import { WhatsappAiService } from './whatsapp-ai.service';
+import { brazilianAlternate } from './whatsapp-number.util';
 import type { EvolutionMessageData, EvolutionAckData } from './interfaces/evolution-payload.interface';
 
 const CONVERSATION_TTL_MS = 30 * 60 * 1000;
@@ -29,24 +30,6 @@ function stripJid(jid: string): string {
 
 function numberForLookup(jid: string): string {
   return normalizeJid(jid).split('@')[0];
-}
-
-// Brazilian numbers: Evolution API may omit the 9th digit for older numbers.
-// If lookup with bare number fails, try adding/removing the 9th digit.
-function brazilianAlternate(number: string): string | null {
-  // 55 + DDD (2 digits) + number
-  if (!number.startsWith('55') || number.length < 12) return null;
-  const ddd = number.slice(2, 4);
-  const local = number.slice(4);
-  if (local.length === 9 && local.startsWith('9')) {
-    // 13-digit → try 12-digit (remove the leading 9)
-    return `55${ddd}${local.slice(1)}`;
-  }
-  if (local.length === 8) {
-    // 12-digit → try 13-digit (add leading 9)
-    return `55${ddd}9${local}`;
-  }
-  return null;
 }
 
 function extractText(data: EvolutionMessageData): string {
